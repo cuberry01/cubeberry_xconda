@@ -1,0 +1,7 @@
+발송일시,제목,본문,링크,이미지,수신자,사용
+2026-10-05 09:00,{{이름}}님, 10월 첫 소식입니다,"안녕하세요! 10월 업데이트를 전해드립니다.
+
+**새 기능**이 추가되었으니 확인해 보세요.",https://example.com/news/october,,,Y
+,주간 팁 #1 — 메일이 스팸으로 가지 않게,"발신자 도메인에 SPF·DKIM을 설정하면 도달률이 크게 올라갑니다.",https://example.com/tips/spf,https://example.com/banner.png,,Y
+,뉴스레터 디자인 가이드,"이미지는 가로 600px 이상, 2MB 이하를 권장합니다.",https://example.com/guide,https://placehold.co/600x240/4f46e5/ffffff?text=Newsletter+Banner,a@x.com; b@y.com,Y
+,구독 감사 이벤트 (보류),아직 작성 중인 초안입니다.,,,보류
