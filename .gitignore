@@ -1,0 +1,16 @@
+# dependencies and Next.js output
+node_modules/
+.next/
+out/
+
+# local environment files (keep the checked-in template only)
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# local database / logs / tooling
+*.log
+*.tsbuildinfo
+next-env.d.ts
+.vercel/
