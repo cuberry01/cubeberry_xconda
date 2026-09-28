@@ -110,6 +110,7 @@ export function rowsToContents(rows: string[][], defaultTime: string): {
   if (headerIdx < 0) return { items: [], warnings: ["시트가 비어 있습니다."] };
   const header = rows[headerIdx];
   const map = mapHeader(header);
+  const lastMappedColumn = Math.max(...Object.values(map));
   if (map.subject === undefined) {
     throw new Error(
       `'제목' 열을 찾을 수 없습니다. 첫 행에 머리글(발송일시, 제목, 본문, 링크, 이미지, 수신자, 사용)을 입력해주세요. 현재 머리글: ${header.join(", ")}`,
@@ -123,6 +124,10 @@ export function rowsToContents(rows: string[][], defaultTime: string): {
     const rowNumber = headerIdx + i + 2;
     const subject = get(r, "subject");
     if (!subject) return;
+    const ignoredValue = r.slice(lastMappedColumn + 1).find((cell) => cell.trim() !== "");
+    if (ignoredValue) {
+      warnings.push(`${rowNumber}행: '사용' 열 뒤의 값 '${ignoredValue}'은(는) 읽지 않습니다. 제목에 쉼표가 있으면 한 셀에 입력했는지 확인해주세요.`);
+    }
     const rawSchedule = get(r, "schedule");
     const scheduledAt = rawSchedule ? parseKstDateTime(rawSchedule, defaultTime) : null;
     if (rawSchedule && !scheduledAt) {

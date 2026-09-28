@@ -3,6 +3,8 @@
 구글 스프레드시트에 메일 내용을 적어두면, 정해진 시간에 맞춰 구독자에게 자동 발송하는 서비스입니다.
 드라이브의 `automated-spreadsheet-mailing-system.zip` 을 풀면 나오는 **Next.js 16 + PostgreSQL(Drizzle) + Nodemailer** 프로젝트입니다.
 
+> **Supabase 연결:** 프로젝트 `yxryzqzdspmwvibbzxqf`에 연결하도록 `.env.example`과 Drizzle 설정을 준비했습니다. `.env`의 `DATABASE_URL`을 Supabase Dashboard → **Connect**에서 복사한 PostgreSQL URI(`sslmode=require` 포함)로 교체하고 `npm run db:migrate`를 실행하세요. 상세한 대시보드 SQL·시트 확인 절차는 저장소 루트의 [`SUPABASE_SETUP.md`](../SUPABASE_SETUP.md)를 참고하세요. 연결 문자열·DB 비밀번호는 Git이나 채팅에 올리지 마세요.
+
 ---
 
 ## 1. 전체 구조 (어떻게 "연동"되나?)
