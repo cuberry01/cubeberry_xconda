@@ -1,4 +1,5 @@
 import { tick } from "@/lib/scheduler";
+import { runXcondaTick } from "@/lib/xconda/pipeline";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,15 @@ async function handle(req: Request) {
     }
   }
   const log = await tick();
-  return Response.json({ ok: true, log });
+  // Xconda 파이프라인(피드 확인 → 추출 → Gemini → Notion → 게시)은
+  // 메일 자동 발송(enabled)과 무관하게 항상 실행한다.
+  let xlog: string[] = [];
+  try {
+    xlog = await runXcondaTick();
+  } catch (e) {
+    xlog = [`[xconda] 오류: ${e instanceof Error ? e.message : e}`];
+  }
+  return Response.json({ ok: true, log: [...log, ...xlog] });
 }
 
 export const GET = handle;

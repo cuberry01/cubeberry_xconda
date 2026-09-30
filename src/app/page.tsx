@@ -7,7 +7,7 @@ import { GRACE_MS, nextQueueSlot, parseSendDays, plannedTimes } from "@/lib/sche
 import { getSettings, updateSettings } from "@/lib/settings";
 import { splitEmails } from "@/lib/sheet";
 import { formatKst } from "@/lib/time";
-import { asc, count, eq } from "drizzle-orm";
+import { asc, count, eq, or } from "drizzle-orm";
 import { headers } from "next/headers";
 import {
   resetStatusAction,
@@ -51,7 +51,7 @@ export default async function Home({ searchParams }: { searchParams: FlashParams
   const list = await db
     .select()
     .from(contents)
-    .where(eq(contents.inSheet, true))
+    .where(or(eq(contents.inSheet, true), eq(contents.source, "xconda")))
     .orderBy(asc(contents.rowNumber));
   const [{ value: subCount }] = await db
     .select({ value: count() })
@@ -178,7 +178,7 @@ export default async function Home({ searchParams }: { searchParams: FlashParams
                   const rc = c.recipients ? splitEmails(c.recipients).length : null;
                   return (
                     <tr key={c.id} className="align-top">
-                      <td className="px-4 py-3 text-slate-400">{c.rowNumber}</td>
+                      <td className="px-4 py-3 text-slate-400">{c.rowNumber > 999_999 ? "X" : c.rowNumber}</td>
                       <td className="whitespace-nowrap px-4 py-3">
                         {c.status === "sent" ? (
                           <span className="text-slate-500">{formatKst(c.sentAt)}</span>
@@ -190,7 +190,7 @@ export default async function Home({ searchParams }: { searchParams: FlashParams
                         )}
                       </td>
                       <td className="max-w-md px-4 py-3">
-                        <div className="font-medium">{c.subject}</div>
+                        <div className="font-medium">{c.subject}{c.source === "xconda" && (<span className="ml-1.5 rounded bg-indigo-50 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600">X</span>)}</div>
                         <div className="line-clamp-2 text-xs text-slate-500">{c.body}</div>
                         {c.error && <div className="mt-1 text-xs text-rose-600">{c.error}</div>}
                       </td>

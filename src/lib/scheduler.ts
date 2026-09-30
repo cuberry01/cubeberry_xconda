@@ -2,6 +2,7 @@ import { db } from "@/db";
 import { contents, settings, type Content, type Settings } from "@/db/schema";
 import { and, asc, eq, gte, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { sendContent } from "./dispatch";
+import { runXcondaTick } from "./xconda/pipeline";
 import { getSettings, updateSettings } from "./settings";
 import { syncSheet } from "./sync";
 import { formatKst, fromKst, kstDateKey, kstParts } from "./time";
@@ -37,7 +38,7 @@ export function nextQueueSlot(s: Settings, from = new Date()): Date | null {
 export function plannedTimes(list: Content[], s: Settings) {
   const result = new Map<number, Date | null>();
   const queue = list
-    .filter((c) => c.status === "pending" && c.active && c.inSheet && !c.scheduledAt)
+    .filter((c) => c.status === "pending" && c.active && (c.inSheet || c.source === "xconda") && !c.scheduledAt)
     .sort((a, b) => a.rowNumber - b.rowNumber);
   let cursor = new Date();
   for (const c of queue) {
@@ -75,6 +76,8 @@ export async function tick(): Promise<string[]> {
       log.push(`시트 동기화 실패: ${e instanceof Error ? e.message : e}`);
     }
 
+    const sendable = or(eq(contents.inSheet, true), eq(contents.source, "xconda"));
+
     // 1) Items with explicit send date/time
     const due = await db
       .select()
@@ -83,7 +86,7 @@ export async function tick(): Promise<string[]> {
         and(
           eq(contents.status, "pending"),
           eq(contents.active, true),
-          eq(contents.inSheet, true),
+          sendable,
           lte(contents.scheduledAt, now),
           gte(contents.scheduledAt, new Date(now.getTime() - GRACE_MS)),
         ),
@@ -114,7 +117,7 @@ export async function tick(): Promise<string[]> {
           and(
             eq(contents.status, "pending"),
             eq(contents.active, true),
-            eq(contents.inSheet, true),
+            or(eq(contents.inSheet, true), eq(contents.source, "xconda")),
             isNull(contents.scheduledAt),
           ),
         )
@@ -152,10 +155,20 @@ const g = globalThis as typeof globalThis & { __mailScheduler?: NodeJS.Timeout }
 export function startScheduler() {
   if (g.__mailScheduler || process.env.DISABLE_SCHEDULER === "true") return;
   console.log("[scheduler] started (every 60s)");
-  const run = () =>
-    tick()
-      .then((l) => l.length && l.some((x) => x.startsWith("[")) && console.log("[scheduler]", l.join(" | ")))
-      .catch((e) => console.error("[scheduler]", e));
+  const run = async () => {
+    const logs: string[] = [];
+    try {
+      logs.push(...(await tick()));
+    } catch (e) {
+      console.error("[scheduler]", e);
+    }
+    try {
+      logs.push(...(await runXcondaTick()));
+    } catch (e) {
+      console.error("[xconda]", e);
+    }
+    if (logs.length && logs.some((x) => x.startsWith("["))) console.log("[scheduler]", logs.join(" | "));
+  };
   setTimeout(run, 10_000);
   g.__mailScheduler = setInterval(run, 60_000);
 }
