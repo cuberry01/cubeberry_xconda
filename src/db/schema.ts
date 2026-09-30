@@ -21,6 +21,13 @@ export const settings = pgTable("settings", {
   lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
   lastSyncError: text("last_sync_error"),
   lastTickAt: timestamp("last_tick_at", { withTimezone: true }),
+  // Xconda (X → Gemini 요약 → Notion → 공지)
+  xEnabled: boolean("x_enabled").notNull().default(true),
+  xNotionDatabaseId: text("x_notion_database_id").notNull().default(""),
+  xRsshubBase: text("x_rsshub_base").notNull().default(""),
+  xAutoPublish: boolean("x_auto_publish").notNull().default(false),
+  xEmailOnPublish: boolean("x_email_on_publish").notNull().default(true),
+  xMaxAgeDays: integer("x_max_age_days").notNull().default(14),
 });
 
 export const contents = pgTable("contents", {
@@ -36,6 +43,8 @@ export const contents = pgTable("contents", {
   rawSchedule: text("raw_schedule").notNull().default(""),
   active: boolean("active").notNull().default(true),
   inSheet: boolean("in_sheet").notNull().default(true),
+  // sheet (구글 시트) | xconda (X 수집 파이프라인)
+  source: text("source").notNull().default("sheet"),
   // pending | sending | sent | failed
   status: text("status").notNull().default("pending"),
   sentAt: timestamp("sent_at", { withTimezone: true }),
@@ -67,6 +76,19 @@ export const sendLogs = pgTable("send_logs", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// Xconda — 자동 수집 대상 X 계정 (RSS 브릿지 피드)
+export const xAccounts = pgTable("x_accounts", {
+  id: serial("id").primaryKey(),
+  handle: text("handle").notNull(),
+  feedUrl: text("feed_url").notNull().default(""),
+  enabled: boolean("enabled").notNull().default(true),
+  lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
+  lastGuid: text("last_guid").notNull().default(""),
+  lastError: text("last_error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export type Settings = typeof settings.$inferSelect;
 export type Content = typeof contents.$inferSelect;
 export type Subscriber = typeof subscribers.$inferSelect;
+export type XAccount = typeof xAccounts.$inferSelect;

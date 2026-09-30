@@ -5,8 +5,10 @@ import { usePathname } from "next/navigation";
 
 const items = [
   { href: "/", label: "콘텐츠 · 발송" },
+  { href: "/xconda", label: "X 수집" },
   { href: "/subscribers", label: "구독자" },
   { href: "/logs", label: "발송 기록" },
+  { href: "/notices", label: "공지" },
   { href: "/settings", label: "설정" },
 ];
 
