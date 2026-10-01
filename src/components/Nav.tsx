@@ -4,8 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const items = [
-  { href: "/", label: "콘텐츠 · 발송" },
-  { href: "/xconda", label: "X 수집" },
+  { href: "/", label: "X 수집" },
   { href: "/subscribers", label: "구독자" },
   { href: "/logs", label: "발송 기록" },
   { href: "/notices", label: "공지" },
@@ -17,7 +16,7 @@ export function Nav() {
   return (
     <nav className="flex gap-1 overflow-x-auto">
       {items.map((it) => {
-        const active = it.href === "/" ? path === "/" : path.startsWith(it.href);
+        const active = it.href === "/" ? path === "/" || path.startsWith("/xconda") : path.startsWith(it.href);
         return (
           <Link
             key={it.href}

@@ -4,14 +4,14 @@ import { AppChrome } from "@/components/AppChrome";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Google Vids | 업무용 AI 동영상 제작 도구",
-  description: "Gemini 기반의 간편하고 협업 가능한 동영상 제작 도구, Google Vids를 만나보세요.",
+  title: "Xconda | AI 소식 수집·요약",
+  description: "X 게시물을 수집하고 AI로 요약해 Notion과 공지로 발행하는 Xconda 대시보드입니다.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="ko">
-      <body className="min-h-screen bg-white text-slate-900 antialiased">
+      <body className="min-h-screen bg-slate-50 text-slate-900 antialiased">
         <AppChrome>{children}</AppChrome>
       </body>
     </html>
