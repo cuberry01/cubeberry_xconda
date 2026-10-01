@@ -13,8 +13,8 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 function back(msg: string, isError = false): never {
-  revalidatePath("/xconda", "layout");
-  redirect(`/xconda?${isError ? "err" : "msg"}=${encodeURIComponent(msg)}`);
+  revalidatePath("/", "layout");
+  redirect(`/?${isError ? "err" : "msg"}=${encodeURIComponent(msg)}`);
 }
 
 function errMsg(e: unknown) {
