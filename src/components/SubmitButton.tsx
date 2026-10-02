@@ -1,38 +1,45 @@
 "use client";
 
-import { useFormStatus } from "react-dom";
 import type { ReactNode } from "react";
+import { useFormStatus } from "react-dom";
+import { IconSpinner } from "./icons";
+import { BUTTON_BASE, BUTTON_SIZE, BUTTON_VARIANTS, type ButtonSize, type ButtonVariant } from "./ui";
 
 export function SubmitButton({
   children,
   className = "",
   variant = "primary",
+  size = "md",
   confirm,
   pendingText = "처리 중…",
 }: {
   children: ReactNode;
   className?: string;
-  variant?: "primary" | "secondary" | "danger" | "ghost";
+  variant?: ButtonVariant;
+  size?: ButtonSize;
   confirm?: string;
   pendingText?: string;
 }) {
   const { pending } = useFormStatus();
-  const styles = {
-    primary: "bg-indigo-600 text-white hover:bg-indigo-700",
-    secondary: "bg-white text-slate-700 ring-1 ring-slate-300 hover:bg-slate-50",
-    danger: "bg-white text-rose-600 ring-1 ring-rose-200 hover:bg-rose-50",
-    ghost: "text-slate-600 hover:bg-slate-100",
-  }[variant];
+
   return (
     <button
       type="submit"
       disabled={pending}
+      aria-busy={pending || undefined}
       onClick={(e) => {
         if (confirm && !window.confirm(confirm)) e.preventDefault();
       }}
-      className={`inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition disabled:cursor-wait disabled:opacity-60 ${styles} ${className}`}
+      className={`${BUTTON_BASE} ${BUTTON_SIZE[size]} ${BUTTON_VARIANTS[variant]} ${className}`}
     >
-      {pending ? pendingText : children}
+      {pending ? (
+        <>
+          <IconSpinner className="h-4 w-4 motion-safe:animate-spin" />
+          <span>{pendingText}</span>
+        </>
+      ) : (
+        children
+      )}
     </button>
   );
 }
