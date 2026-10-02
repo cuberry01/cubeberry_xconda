@@ -51,10 +51,22 @@
   html {
     color-scheme: dark;
     -webkit-tap-highlight-color: transparent;
+    /* 스크롤바 유무로 본문 폭이 흔들리지 않게 고정 */
+    scrollbar-gutter: stable;
   }
 
   body {
     @apply bg-canvas font-sans text-ink antialiased;
+  }
+
+  /* 제목은 줄바꿈 균형, 본문은 고아 단어 방지 (미지원 브라우저는 무시) */
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+  p {
+    text-wrap: pretty;
   }
 
   /* 키보드 포커스는 항상 보이게 (마우스 클릭 시에는 표시하지 않음) */

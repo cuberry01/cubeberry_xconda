@@ -208,6 +208,46 @@ export const IconSpinner = (p: IconProps) => (
   </Svg>
 );
 
+export const IconSearch = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.5-3.5" />
+  </Svg>
+);
+
+export const IconCopy = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="9" y="9" width="12" height="12" rx="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </Svg>
+);
+
+export const IconArrowRight = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M5 12h14" />
+    <path d="m13 6 6 6-6 6" />
+  </Svg>
+);
+
+export const IconRotateCcw = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+    <path d="M3 3v5h5" />
+  </Svg>
+);
+
+export const IconFilter = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 5h16l-6 7v6l-4 2v-8L4 5z" />
+  </Svg>
+);
+
+export const IconZap = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z" />
+  </Svg>
+);
+
 export const IconShield = (p: IconProps) => (
   <Svg {...p}>
     <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
