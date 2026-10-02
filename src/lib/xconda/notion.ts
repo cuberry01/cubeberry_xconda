@@ -299,19 +299,63 @@ export async function syncImageBlock(
 export interface QueryOptions {
   status?: XStatus;
   pageSize?: number;
+  /** 이전 페이지의 next_cursor — "더 보기"에 사용 */
+  cursor?: string;
 }
 
-export async function queryItems(cfg: XcondaConfig, opts: QueryOptions = {}): Promise<XItem[]> {
+export interface QueryPage {
+  items: XItem[];
+  /** 다음 페이지 커서(없으면 마지막 페이지) */
+  nextCursor: string | null;
+  hasMore: boolean;
+}
+
+/**
+ * Notion DB 쿼리 1페이지 — 커서 기반 페이지네이션.
+ * Notion `page_size` 상한은 100이라 그보다 큰 요청은 100으로 낮춥니다.
+ */
+export async function queryItemsPage(cfg: XcondaConfig, opts: QueryOptions = {}): Promise<QueryPage> {
   const body: Record<string, unknown> = {
     page_size: Math.min(opts.pageSize ?? 20, 100),
     sorts: [{ timestamp: "created_time", direction: "descending" }],
   };
+  if (opts.cursor) body.start_cursor = opts.cursor;
   if (opts.status) body.filter = { property: PROP.status, select: { equals: opts.status } };
   const data = (await notionFetch(cfg, `/databases/${cfg.notionDatabaseId}/query`, {
     method: "POST",
     body: JSON.stringify(body),
-  })) as { results?: NotionPage[] };
-  return (data.results ?? []).map(mapPage);
+  })) as { results?: NotionPage[]; has_more?: boolean; next_cursor?: string | null };
+  return {
+    items: (data.results ?? []).map(mapPage),
+    nextCursor: data.next_cursor ?? null,
+    hasMore: Boolean(data.has_more && data.next_cursor),
+  };
+}
+
+/** 커서를 따라가며 최대 maxItems개를 모은다 (화면의 "더 보기" 범위 계산용) */
+export async function queryItemsUpTo(
+  cfg: XcondaConfig,
+  maxItems: number,
+  pageSize = 100,
+): Promise<{ items: XItem[]; hasMore: boolean }> {
+  const items: XItem[] = [];
+  let cursor: string | undefined;
+  let more = false;
+  for (let guard = 0; guard < 50; guard++) {
+    const page: QueryPage = await queryItemsPage(cfg, { pageSize, cursor });
+    items.push(...page.items);
+    more = page.hasMore;
+    if (!page.hasMore || items.length >= maxItems) break;
+    cursor = page.nextCursor ?? undefined;
+  }
+  // 마지막 페이지에서 maxItems를 넘겨 받은 경우에도 "더 보기"가 가능해야 한다
+  return { items: items.slice(0, maxItems), hasMore: more || items.length > maxItems };
+}
+
+/** 단일 페이지 조회 (파이프라인 내부용) */
+export async function queryItems(cfg: XcondaConfig, opts: QueryOptions = {}): Promise<XItem[]> {
+  const page = await queryItemsPage(cfg, opts);
+  return page.items;
 }
 
 /** URL 중복 검사 — ingest(url)의 첫 번째 필터 */
@@ -367,6 +411,44 @@ const STATUS_OPTIONS: { name: string; color: string }[] = [
 
 const CATEGORY_OPTIONS = ["AI 모델", "AI 영상", "AI 이미지", "AI 도구", "뉴스", "기타"].map((name) => ({ name }));
 
+/** DB 생성/속성 추가에 공통으로 쓰는 속성 정의 (Notion 속성 형식) */
+export const DB_PROPERTY_DEFS: Record<string, Record<string, unknown>> = {
+  [PROP.title]: { title: {} },
+  [PROP.sourceUrl]: { url: {} },
+  [PROP.author]: { rich_text: {} },
+  [PROP.originalText]: { rich_text: {} },
+  [PROP.summary]: { rich_text: {} },
+  [PROP.announcement]: { rich_text: {} },
+  [PROP.category]: { select: { options: CATEGORY_OPTIONS } },
+  [PROP.tags]: { multi_select: {} },
+  [PROP.status]: { select: { options: STATUS_OPTIONS } },
+  [PROP.published]: { checkbox: {} },
+  [PROP.landingUrl]: { url: {} },
+  [PROP.sourceDate]: { date: {} },
+  [PROP.createdAt]: { date: {} },
+  [PROP.imageUrl]: { url: {} },
+  [PROP.note]: { rich_text: {} },
+};
+
+/**
+ * 이미 있는 DB에 누락 속성만 추가한다 (기존 행/데이터는 그대로).
+ * getDatabaseInfo()가 돌려주는 missing 목록을 그대로 넘기면 된다.
+ */
+export async function ensureDatabaseProperties(cfg: XcondaConfig, missing: string[]): Promise<string[]> {
+  const properties: Record<string, unknown> = {};
+  for (const name of missing) {
+    const def = DB_PROPERTY_DEFS[name];
+    if (def) properties[name] = def;
+  }
+  const names = Object.keys(properties);
+  if (!names.length) return [];
+  await notionFetch(cfg, `/databases/${cfg.notionDatabaseId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ properties }),
+  });
+  return names;
+}
+
 /** 부모 페이지 아래에 Xconda DB를 필요한 속성까지 포함해 자동 생성 */
 export async function createXcondaDatabase(cfg: XcondaConfig, parentPageId: string): Promise<{ id: string; url: string }> {
   const data = (await notionFetch(cfg, "/databases", {
@@ -374,23 +456,7 @@ export async function createXcondaDatabase(cfg: XcondaConfig, parentPageId: stri
     body: JSON.stringify({
       parent: { page_id: parentPageId },
       title: [{ type: "text", text: { content: "Xconda" } }],
-      properties: {
-        [PROP.title]: { title: {} },
-        [PROP.sourceUrl]: { url: {} },
-        [PROP.author]: { rich_text: {} },
-        [PROP.originalText]: { rich_text: {} },
-        [PROP.summary]: { rich_text: {} },
-        [PROP.announcement]: { rich_text: {} },
-        [PROP.category]: { select: { options: CATEGORY_OPTIONS } },
-        [PROP.tags]: { multi_select: {} },
-        [PROP.status]: { select: { options: STATUS_OPTIONS } },
-        [PROP.published]: { checkbox: {} },
-        [PROP.landingUrl]: { url: {} },
-        [PROP.sourceDate]: { date: {} },
-        [PROP.createdAt]: { date: {} },
-        [PROP.imageUrl]: { url: {} },
-        [PROP.note]: { rich_text: {} },
-      },
+      properties: DB_PROPERTY_DEFS,
     }),
   })) as { id: string; url: string };
   return { id: data.id, url: data.url };

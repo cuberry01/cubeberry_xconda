@@ -28,6 +28,9 @@ export const settings = pgTable("settings", {
   xAutoPublish: boolean("x_auto_publish").notNull().default(false),
   xEmailOnPublish: boolean("x_email_on_publish").notNull().default(true),
   xMaxAgeDays: integer("x_max_age_days").notNull().default(14),
+  // 관제용: 마지막 파이프라인 실행 시각과 요약 로그(2줄)
+  xLastTickAt: timestamp("x_last_tick_at", { withTimezone: true }),
+  xLastTickLog: text("x_last_tick_log"),
 });
 
 export const contents = pgTable("contents", {

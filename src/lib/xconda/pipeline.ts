@@ -9,6 +9,7 @@
 import { revalidatePath } from "next/cache";
 import { db } from "@/db";
 import { contents } from "@/db/schema";
+import { updateSettings } from "@/lib/settings";
 import { getAIEngine, type SummarizeResult } from "./ai";
 import { getXcondaConfig, missingConfig, resolveBaseUrl, type XcondaConfig } from "./config";
 import { extractXPost, extractWebPage } from "./extract";
@@ -307,10 +308,29 @@ export async function setItemStatus(pageId: string, status: XStatus, note = ""):
 
 let tickRunning = false;
 
+/** 관제 화면에 남길 로그 줄 수 (settings.x_last_tick_log) */
+export const TICK_LOG_LINES = 2;
+
+/** 실행 로그를 화면에 보여줄 2줄로 압축 */
+function summarizeTickLog(log: string[]): string {
+  const lines = log.length ? log.slice(0, TICK_LOG_LINES) : ["[xconda] 처리할 항목 없음"];
+  return truncate(lines.join("\n"), 1900);
+}
+
+/** 마지막 실행 시각/로그 기록 — 실패해도 파이프라인 결과에는 영향을 주지 않는다 */
+async function recordTick(log: string[]): Promise<void> {
+  try {
+    await updateSettings({ xLastTickAt: new Date(), xLastTickLog: summarizeTickLog(log) });
+  } catch {
+    // DB에 기록하지 못해도 파이프라인 자체는 계속 동작해야 한다
+  }
+}
+
 /**
  * cron에서 주기적으로 호출하는 전체 틱:
  * 피드 확인 → NEW 처리 → (자동 게시 시) READY/SUMMARIZED 게시.
  * 메일 자동 발송(settings.enabled)과 무관하게 동작한다.
+ * 실행 결과는 settings.x_last_tick_at / x_last_tick_log에 남아 관제 화면에서 확인할 수 있다.
  */
 export async function runXcondaTick(): Promise<string[]> {
   if (tickRunning) return ["[xconda] 이전 실행이 진행 중입니다."];
@@ -319,8 +339,14 @@ export async function runXcondaTick(): Promise<string[]> {
   const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
   try {
     const cfg = await getXcondaConfig();
-    if (!cfg.enabled) return [];
-    if (!cfg.notionToken || !cfg.notionDatabaseId || !cfg.geminiApiKey) return ["[xconda] Notion/Gemini 미설정 — 건너뜀"];
+    if (!cfg.enabled) {
+      log.push("[xconda] 자동 실행이 꺼져 있습니다 (X 수집 설정에서 켜기)");
+      return log;
+    }
+    if (!cfg.notionToken || !cfg.notionDatabaseId || !cfg.geminiApiKey) {
+      log.push("[xconda] Notion/Gemini 미설정 — 건너뜀");
+      return log;
+    }
 
     // 1) 관제 계정 피드 확인
     try {
@@ -374,6 +400,7 @@ export async function runXcondaTick(): Promise<string[]> {
     log.push(`[xconda] 오류: ${msg(e)}`);
   } finally {
     tickRunning = false;
+    await recordTick(log);
   }
   return log;
 }
