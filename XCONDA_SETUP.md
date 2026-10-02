@@ -5,11 +5,12 @@ X 전용으로 단순화한 것으로, 유료 X API 없이 동작합니다.
 
 ```text
 [수동 URL 입력] ──┐
-                  ├→ Notion DB (NEW) → 본문 추출 → Gemini 요약 → SUMMARIZED
-[관제 계정 RSS] ──┘        │                                              │
-                           │  필터: URL 중복 / 게시물 나이 / AI 관련성 / 제목 유사도
-                           ↓                                              ↓ (자동 게시 또는 수동)
-                     Notion = Inbox + 상태 DB  ──────────────→  /notices 공지 페이지
+                  ├→ Notion DB (NEW) → 원문·이미지 추출 ─┬→ (선택) Supabase Storage
+[관제 계정 RSS] ──┘                                      │            ↓
+                                                        │   Notion Image URL + 이미지 블록
+                                                        ↓
+                                            필터 → Gemini 요약 → 게시
+                                                                  ├→ /notices 공지 페이지
                                                                   └→ (선택) 뉴스레터 대기열 → 기존 예약 발송
 ```
 
@@ -73,6 +74,9 @@ GEMINI_API_KEY=AIza...             # 필수
 NOTION_DATABASE_ID=...             # 선택 (관리자 페이지에서 저장 가능)
 GEMINI_MODEL=gemini-2.5-flash      # 선택
 RSSHUB_BASE_URL=                   # 선택 (관리자 페이지에서 저장 가능)
+SUPABASE_URL=https://<ref>.supabase.co           # 선택, 이미지 영구 보관
+SUPABASE_SERVICE_ROLE_KEY=...                   # 선택, 서버 전용 비밀키
+SUPABASE_STORAGE_BUCKET=xconda-images            # 선택 (기본값 xconda-images)
 ```
 
 기존처럼 `GET /api/cron`을 1분 간격으로 호출하면 파이프라인이 같이 돕니다(메일 자동 발송 설정과 무관).
@@ -99,9 +103,10 @@ RSSHUB_BASE_URL=                   # 선택 (관리자 페이지에서 저장 �
 ### 게시와 뉴스레터 연동
 
 - **자동 게시**를 끄면 요약(SUMMARIZED) 후 사람이 확인하고 "게시"를 누릅니다.
-- **게시 시 뉴스레터 대기열에 추가**가 켜져 있으면 발행 즉시 기존 시트 메일러의 대기열(`contents`)에 들어가
-  설정된 발송 요일·시간에 구독자 전체에게 메일이 갑니다. 홈 "콘텐츠 · 발송" 화면에서 X 배지로 구분할 수 있습니다.
-- 게시된 항목은 `/notices`(공지 페이지)에 카드 형태로 나열되고, Notion의 `Landing URL`이 그 앵커를 가리킵니다.
+- **게시 시 뉴스레터 대기열에 추가**가 켜져 있으면 발행 즉시 기존 시트 메일러의 대기열(`contents`)에 들어갑니다.
+  전역 자동 발송과 크론이 켜져 있으면 설정된 발송 요일·시간에 활성 구독자에게 발송됩니다. 메일 CTA는 `/notices`의 게시 카드로 연결하고, 원문 링크도 본문에 함께 넣습니다.
+- Xconda 메일에는 게시 이미지도 포함됩니다. `SUPABASE_URL`과 `SUPABASE_SERVICE_ROLE_KEY`를 설정하면 원본 이미지를 공개 Storage 버킷에 복사해 Notion 이미지 블록, 공지 페이지, 뉴스레터에서 안정적인 주소를 사용합니다. Notion 이미지 블록이 지원하지 않는 확장자(WebP/AVIF 등)는 `Image URL` 속성과 공지·메일에서 사용합니다. 스토리지 미설정/실패 시 원본 이미지 URL로 계속 게시합니다.
+- 게시된 항목은 `/notices`(공지 페이지)에 카드 형태로 나열되고, Notion의 `Landing URL`이 그 앵커를 가리킵니다. 이메일 앱에서 외부 이미지가 기본 차단된 경우에는 수신자가 “이미지 표시”를 눌러야 할 수 있습니다.
 
 ## 6. 문제 해결
 

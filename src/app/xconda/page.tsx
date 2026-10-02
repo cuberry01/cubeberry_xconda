@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { xAccounts } from "@/db/schema";
 import { formatKst } from "@/lib/time";
 import { getXcondaConfig, missingConfig } from "@/lib/xconda/config";
+import { getImageStorageBucketName, getImageStorageStatus } from "@/lib/xconda/image-storage";
 import { getDatabaseInfo, queryItems } from "@/lib/xconda/notion";
 import { STATUS_LABELS, type XItem, type XStatus } from "@/lib/xconda/types";
 import { asc } from "drizzle-orm";
@@ -80,6 +81,7 @@ export default async function XcondaPage({ searchParams }: { searchParams: Flash
   }
 
   const missing = missingConfig(cfg);
+  const imageStorageStatus = getImageStorageStatus();
 
   let items: XItem[] = [];
   let dbInfo = null as Awaited<ReturnType<typeof getDatabaseInfo>> | null;
@@ -133,7 +135,7 @@ export default async function XcondaPage({ searchParams }: { searchParams: Flash
       )}
 
       {/* 상태 카드 */}
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
           <div className="text-xs font-medium text-slate-500">Notion</div>
           <div className={`mt-1 text-lg font-bold ${notionReady ? "text-emerald-600" : "text-slate-400"}`}>
@@ -168,6 +170,27 @@ export default async function XcondaPage({ searchParams }: { searchParams: Flash
             {accounts.filter((a) => a.enabled).length} / {publishedCount}
           </div>
           <div className="mt-2 text-xs text-slate-500">15분마다 피드 확인 (cron이 켜져 있을 때)</div>
+        </div>
+        <div className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
+          <div className="text-xs font-medium text-slate-500">이미지 보관</div>
+          <div
+            className={`mt-1 text-lg font-bold ${
+              imageStorageStatus === "ready"
+                ? "text-emerald-600"
+                : imageStorageStatus === "incomplete"
+                  ? "text-amber-600"
+                  : "text-slate-400"
+            }`}
+          >
+            {imageStorageStatus === "ready" ? "● 설정됨" : imageStorageStatus === "incomplete" ? "⚠ 설정 확인" : "○ 원본 URL 사용"}
+          </div>
+          <div className="mt-2 truncate text-xs text-slate-500">
+            {imageStorageStatus === "ready"
+              ? `Supabase Storage · ${getImageStorageBucketName()}`
+              : imageStorageStatus === "incomplete"
+                ? "SUPABASE_URL + SERVICE_ROLE_KEY 필요"
+                : "환경변수를 설정하면 이미지 만료를 줄일 수 있습니다"}
+          </div>
         </div>
       </div>
 
