@@ -15,6 +15,13 @@
       "when": 1790780929775,
       "tag": "0001_xconda",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1790942434737,
+      "tag": "0002_xconda_ops",
+      "breakpoints": true
     }
   ]
 }

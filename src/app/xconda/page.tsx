@@ -1,14 +1,20 @@
+import type { ReactNode } from "react";
+
+import { CopyButton } from "@/components/CopyButton";
 import { Flash } from "@/components/Flash";
 import { SubmitButton } from "@/components/SubmitButton";
 import {
   IconAlert,
   IconCheckCircle,
+  IconChevronDown,
   IconClock,
   IconDatabase,
   IconExternal,
+  IconHistory,
   IconImage,
   IconInbox,
   IconLink,
+  IconMegaphone,
   IconPlay,
   IconRefresh,
   IconSend,
@@ -22,34 +28,37 @@ import {
   Callout,
   EmptyState,
   FilterChips,
+  KeyValue,
   LinkButton,
   PageHeader,
   Panel,
+  SearchForm,
   StatCard,
   hintClass,
   inputClass,
   labelClass,
-  panelClass,
   textareaClass,
   type BadgeTone,
 } from "@/components/ui";
 import { db } from "@/db";
 import { xAccounts } from "@/db/schema";
-import { formatKst } from "@/lib/time";
+import { getSettings } from "@/lib/settings";
+import { elapsedMs, formatKst, formatRelativeKst } from "@/lib/time";
 import { getXcondaConfig, missingConfig } from "@/lib/xconda/config";
 import { getImageStorageBucketName, getImageStorageStatus } from "@/lib/xconda/image-storage";
-import { getDatabaseInfo, queryItems } from "@/lib/xconda/notion";
+import { getDatabaseInfo, queryItemsUpTo } from "@/lib/xconda/notion";
 import { FAILURE_STATUSES, STATUS_LABELS, type XItem, type XStatus } from "@/lib/xconda/types";
 import { asc } from "drizzle-orm";
-import Link from "next/link";
 import {
   addAccountAction,
+  addMissingPropertiesAction,
   checkAccountAction,
   createNotionDbAction,
   deleteAccountAction,
   ignoreAction,
   ingestAction,
   publishAction,
+  resummarizeAction,
   retryAction,
   runTickAction,
   saveXSettingsAction,
@@ -58,7 +67,25 @@ import {
 
 export const dynamic = "force-dynamic";
 
-type PageParams = Promise<{ msg?: string; err?: string; status?: string }>;
+type PageParams = Promise<{
+  msg?: string;
+  err?: string;
+  status?: string;
+  q?: string;
+  sort?: string;
+  limit?: string;
+}>;
+
+/* ── 목록 옵션 ─────────────────────────────────────────────── */
+
+/** 한 번에 Notion에서 가져오는 건수 (Notion API 페이지 상한) */
+const PAGE_SIZE = 100;
+/** "더 보기"로 늘릴 수 있는 최대 조회 건수 */
+const MAX_ITEMS = 500;
+/** 자동 실행이 이보다 오래 멈춰 있으면 경고 */
+const STALE_TICK_MS = 6 * 60 * 60 * 1000;
+/** 실패 항목 카드에서 보여줄 원문 미리보기 길이 */
+const ORIGINAL_PREVIEW = 700;
 
 const STATUS_TONE: Record<XStatus, BadgeTone> = {
   NEW: "neutral",
@@ -96,6 +123,68 @@ function matchesFilter(status: XStatus | "", key: FilterKey) {
   return status !== "PUBLISHED" && status !== "IGNORED" && !FAILURE_STATUSES.includes(status as XStatus);
 }
 
+/** 정렬 — 전부 서버에서 처리하고 URL로 공유할 수 있습니다. */
+const SORTS = [
+  { key: "new", label: "최신순", hint: "Notion에 들어온 순서" },
+  { key: "old", label: "오래된순", hint: "먼저 수집된 항목부터" },
+  { key: "date", label: "발행일순", hint: "원문 게시 날짜 기준" },
+] as const;
+
+type SortKey = (typeof SORTS)[number]["key"];
+
+function sortItems(items: XItem[], key: SortKey): XItem[] {
+  const time = (d: Date | null) => (d ? d.getTime() : Number.NEGATIVE_INFINITY);
+  const sorted = [...items];
+  if (key === "old") {
+    sorted.sort((a, b) => {
+      const at = a.createdAt ? a.createdAt.getTime() : Number.POSITIVE_INFINITY;
+      const bt = b.createdAt ? b.createdAt.getTime() : Number.POSITIVE_INFINITY;
+      return at - bt;
+    });
+  } else if (key === "date") {
+    sorted.sort((a, b) => time(b.sourceDate) - time(a.sourceDate) || time(b.createdAt) - time(a.createdAt));
+  } else {
+    sorted.sort((a, b) => time(b.createdAt) - time(a.createdAt));
+  }
+  return sorted;
+}
+
+/** 제목·요약·작성자·카테고리·태그 검색 (대소문자 무시) */
+function matchesQuery(item: XItem, q: string) {
+  if (!q) return true;
+  const needle = q.toLowerCase();
+  const haystack = [item.title, item.summary, item.author, item.category, item.tags.join(" ")]
+    .join("\n")
+    .toLowerCase();
+  return haystack.includes(needle);
+}
+
+/** 상태 배지에 이어 붙이는 "다음 행동" 안내 — 지금 무엇을 해야 하는지 한 줄로 */
+const STATUS_NEXT: Record<XStatus | "", string> = {
+  "": "Notion에서 Status 속성을 확인하세요 (선택 값이 비어 있음).",
+  NEW: "다음 자동 실행(15분 이내)에서 본문 추출과 요약이 진행됩니다.",
+  EXTRACTED: "본문 확보 완료 — 다음 자동 실행에서 Gemini 요약이 진행됩니다.",
+  SUMMARIZED: "요약 완료 — 내용을 확인하고 '게시'를 누르면 공지에 올라갑니다.",
+  READY: "발행 대기 — '게시'를 누르면 공지와 뉴스레터 대기열에 들어갑니다.",
+  PUBLISHED: "게시 완료 — /notices 공지 페이지에 반영되었습니다.",
+  EXTRACT_FAILED: "본문 추출 실패 — 비공개·삭제된 게시물일 수 있습니다. 본문을 붙여넣고 재요약하세요.",
+  AI_FAILED: "Gemini 요약 실패 — API 키·할당량을 확인한 뒤 '다시 처리'를 누르세요.",
+  PUBLISH_FAILED: "게시 실패 — Notion 권한/속성을 확인한 뒤 '다시 처리'를 누르세요.",
+  IGNORED: "제외됨 — 중복·오래됨·관련성 없음으로 판단되어 종료된 항목입니다.",
+};
+
+function isFailureStatus(status: XStatus | "") {
+  return FAILURE_STATUSES.includes(status as XStatus);
+}
+
+/** 오류 메시지에 감춰진 cause(drizzle/pg의 실제 원인)까지 붙여 원인 파악을 돕는다 */
+function errorText(e: unknown): string {
+  const base = e instanceof Error ? e.message : String(e);
+  const cause = e instanceof Error ? (e as { cause?: unknown }).cause : undefined;
+  if (!cause) return base;
+  return `${base} — ${cause instanceof Error ? cause.message : String(cause)}`;
+}
+
 /** 체크박스 + 제목 + 설명 (터치 타깃 44px 이상) */
 function CheckRow({
   name,
@@ -124,19 +213,95 @@ function CheckRow({
   );
 }
 
+/** 접히는 상세 블록 (요약 전문 / 공지문 / 원문) */
+function DetailBlock({ label, children, meta }: { label: string; children: ReactNode; meta?: string }) {
+  return (
+    <details className="group mt-2 rounded-xl border border-line/70 bg-canvas/40">
+      <summary className="flex min-h-9 cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs font-medium text-muted transition-colors duration-150 hover:text-ink">
+        <IconChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60 transition-transform duration-150 group-open:rotate-180" />
+        {label}
+        {meta && <span className="font-mono text-[11px] text-faint">{meta}</span>}
+        <span className="ml-auto text-[11px] text-faint group-open:hidden">펼치기</span>
+        <span className="ml-auto hidden text-[11px] text-faint group-open:inline">접기</span>
+      </summary>
+      <div className="border-t border-line/70 px-3 py-2.5 text-xs leading-5 whitespace-pre-wrap text-ink-2">
+        {children}
+      </div>
+    </details>
+  );
+}
+
+/** 실패 항목 복구 폼 — 본문을 붙여넣으면 추출을 건너뛰고 요약부터 다시 진행 */
+function RecoveryForm({ pageId, back }: { pageId: string; back: string }) {
+  return (
+    <form action={resummarizeAction} className="mt-3 rounded-xl border border-rose-400/30 bg-rose-500/5 p-3">
+      <input type="hidden" name="pageId" value={pageId} />
+      <input type="hidden" name="back" value={back} />
+      <label className="mb-1.5 block text-xs font-semibold text-rose-100" htmlFor={`recover-${pageId}`}>
+        본문 직접 붙여넣고 재요약
+      </label>
+      <textarea
+        id={`recover-${pageId}`}
+        name="text"
+        required
+        minLength={20}
+        className={`${textareaClass} h-24`}
+        placeholder="게시물 본문을 붙여넣으세요 (20자 이상). 추출 단계를 건너뛰고 Gemini 요약부터 진행합니다."
+      />
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <p className="text-[11px] leading-4 text-muted">
+          X 게시물이 비공개·삭제되어 본문을 가져올 수 없을 때 사용합니다.
+        </p>
+        <SubmitButton size="sm" variant="danger" pendingText="재요약 중…">
+          <IconSparkles className="h-3.5 w-3.5" />
+          재요약
+        </SubmitButton>
+      </div>
+    </form>
+  );
+}
+
 export default async function XcondaPage({ searchParams }: { searchParams: PageParams }) {
   const sp = await searchParams;
+
   const filterKey: FilterKey = (FILTERS.find((f) => f.key === sp.status)?.key ?? "all") as FilterKey;
+  const sortKey: SortKey = (SORTS.find((s) => s.key === sp.sort)?.key ?? "new") as SortKey;
+  const query = (sp.q || "").trim();
+  const requestedLimit = Number(sp.limit);
+  const limit = Number.isFinite(requestedLimit)
+    ? Math.min(Math.max(Math.round(requestedLimit), PAGE_SIZE), MAX_ITEMS)
+    : PAGE_SIZE;
+
+  /** 현재 검색·필터·정렬·조회 범위를 유지한 URL 만들기 (기본값은 URL에 남기지 않음) */
+  const hrefWith = (patch: Partial<Record<"status" | "q" | "sort" | "limit", string | undefined>>) => {
+    const merged: Record<string, string | undefined> = {
+      status: filterKey === "all" ? undefined : filterKey,
+      q: query || undefined,
+      sort: sortKey === "new" ? undefined : sortKey,
+      limit: limit > PAGE_SIZE ? String(limit) : undefined,
+      ...patch,
+    };
+    const usp = new URLSearchParams();
+    for (const [k, v] of Object.entries(merged)) if (v) usp.set(k, v);
+    const qs = usp.toString();
+    return qs ? `/?${qs}` : "/";
+  };
+  const backTo = hrefWith({});
 
   // DB 미연결/마이그레이션 전에도 설정 안내가 보이도록 먼저 안전하게 읽는다
   let cfg: Awaited<ReturnType<typeof getXcondaConfig>> | null = null;
   let accounts: (typeof xAccounts.$inferSelect)[] = [];
+  let xLastTickAt: Date | null = null;
+  let xLastTickLog = "";
   let dbError = "";
   try {
     cfg = await getXcondaConfig();
     accounts = await db.select().from(xAccounts).orderBy(asc(xAccounts.id));
+    const s = await getSettings();
+    xLastTickAt = s.xLastTickAt;
+    xLastTickLog = s.xLastTickLog ?? "";
   } catch (e) {
-    dbError = e instanceof Error ? e.message : String(e);
+    dbError = errorText(e);
   }
 
   if (!cfg) {
@@ -175,6 +340,10 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
                 Supabase SQL Editor에서{" "}
                 <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs">
                   supabase/migrations/20260930000000_xconda.sql
+                </code>{" "}
+                과{" "}
+                <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs">
+                  supabase/migrations/20261002000000_xconda_ops.sql
                 </code>
                 을 실행하세요. (자세한 내용은{" "}
                 <code className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-xs">XCONDA_SETUP.md</code>)
@@ -190,28 +359,50 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
   const imageStorageStatus = getImageStorageStatus();
 
   let items: XItem[] = [];
+  let itemHasMore = false;
   let dbInfo = null as Awaited<ReturnType<typeof getDatabaseInfo>> | null;
   let notionError = "";
-  if (!missing.some((m) => m.includes("Notion")) && cfg.notionToken && cfg.notionDatabaseId) {
+  const notionConfigured = Boolean(cfg.notionToken && cfg.notionDatabaseId);
+  if (!missing.some((m) => m.includes("Notion")) && notionConfigured) {
     try {
       dbInfo = await getDatabaseInfo(cfg);
-      items = await queryItems(cfg, { pageSize: 50 });
+      const page = await queryItemsUpTo(cfg, limit);
+      items = page.items;
+      itemHasMore = page.hasMore;
     } catch (e) {
-      notionError = e instanceof Error ? e.message : String(e);
+      notionError = errorText(e);
     }
   }
 
-  const notionReady = Boolean(cfg.notionToken && cfg.notionDatabaseId && !notionError);
+  const notionReady = Boolean(notionConfigured && !notionError);
   const geminiReady = Boolean(cfg.geminiApiKey);
   const publishedCount = items.filter((i) => i.status === "PUBLISHED").length;
-  const failedCount = items.filter((i) => FAILURE_STATUSES.includes(i.status as XStatus)).length;
+  const failedCount = items.filter((i) => isFailureStatus(i.status)).length;
   const activeAccounts = accounts.filter((a) => a.enabled).length;
-  const visibleItems = items.filter((i) => matchesFilter(i.status, filterKey));
+
+  const searched = items.filter((i) => matchesQuery(i, query));
+  const visibleItems = sortItems(
+    searched.filter((i) => matchesFilter(i.status, filterKey)),
+    sortKey,
+  );
 
   const chips = FILTERS.map((f) => ({
     ...f,
-    count: items.filter((i) => matchesFilter(i.status, f.key)).length,
+    count: searched.filter((i) => matchesFilter(i.status, f.key)).length,
   }));
+
+  // ── 관제: 마지막 자동 실행 ──────────────────────────────────
+  const tickAgeMs = xLastTickAt ? elapsedMs(xLastTickAt) : null;
+  const tickLogLines = xLastTickLog.split("\n").filter(Boolean);
+  const tickHasError = tickLogLines.some((l) => /오류|실패|error/i.test(l));
+  const tickStale = tickAgeMs !== null && tickAgeMs > STALE_TICK_MS;
+  const autoRunProblem = cfg.enabled && (xLastTickAt === null || tickStale || tickHasError);
+  const autoRunTitle =
+    xLastTickAt === null
+      ? "자동 실행 기록이 없습니다"
+      : tickStale
+        ? `자동 실행이 ${Math.floor((tickAgeMs ?? 0) / 3_600_000)}시간째 멈춰 있습니다`
+        : "마지막 자동 실행에 오류가 있습니다";
 
   return (
     <div>
@@ -227,6 +418,7 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
               공지 페이지
             </LinkButton>
             <form action={runTickAction}>
+              <input type="hidden" name="back" value={backTo} />
               <SubmitButton variant="primary" pendingText="실행 중…">
                 <IconPlay className="h-3.5 w-3.5" />
                 지금 실행
@@ -261,12 +453,68 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
         </Callout>
       )}
 
+      {/* 자동 실행 중단 경고 — 기록 없음/6시간 이상 미실행/마지막 로그에 오류 */}
+      {autoRunProblem && (
+        <Callout
+          tone="danger"
+          title={autoRunTitle}
+          className="mb-6"
+          action={
+            <form action={runTickAction}>
+              <input type="hidden" name="back" value={backTo} />
+              <SubmitButton size="sm" variant="secondary" pendingText="실행 중…">
+                <IconPlay className="h-3.5 w-3.5" />
+                지금 실행
+              </SubmitButton>
+            </form>
+          }
+        >
+          <p>
+            {xLastTickAt ? (
+              <>
+                마지막 실행 <b className="text-rose-100">{formatRelativeKst(xLastTickAt)}</b> (
+                {formatKst(xLastTickAt)}) · 서버 내장 스케줄러가 꺼져 있거나 서버리스라면{" "}
+                <code className="rounded bg-rose-400/15 px-1 font-mono">GET /api/cron</code>을 외부 크론으로
+                1분마다 호출해야 합니다.
+              </>
+            ) : (
+              <>
+                아직 한 번도 실행되지 않았습니다. 파이프라인이 꺼져 있으면 X 수집 설정에서 켜고,{" "}
+                <code className="rounded bg-rose-400/15 px-1 font-mono">GET /api/cron</code> 호출 또는 서버 내장
+                스케줄러가 동작 중인지 확인하세요.
+              </>
+            )}
+          </p>
+          {tickLogLines.length > 0 && (
+            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap rounded-lg bg-rose-950/40 px-2.5 py-2 font-mono text-[11px] leading-5 text-rose-100/90">
+              {tickLogLines.join("\n")}
+            </pre>
+          )}
+        </Callout>
+      )}
+
+      {!cfg.enabled && (
+        <Callout
+          tone="warn"
+          title="파이프라인이 꺼져 있습니다"
+          className="mb-6"
+          action={
+            <LinkButton href="#x-settings" size="sm" variant="secondary">
+              켜러 가기
+            </LinkButton>
+          }
+        >
+          자동 수집(cron)이 동작하지 않습니다. 아래 X 수집 설정의 <b className="text-amber-100">파이프라인 사용</b>
+          을 켜야 새 게시물을 처리합니다. 수동 URL 수집은 지금도 동작합니다.
+        </Callout>
+      )}
+
       {/* 상태 카드 */}
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         <StatCard
           label="Notion"
           icon={<IconDatabase className="h-3.5 w-3.5" />}
-          tone={notionReady ? "ok" : notionError ? "danger" : "off"}
+          tone={notionReady ? (dbInfo?.missing.length ? "warn" : "ok") : notionError ? "danger" : "off"}
           value={notionReady ? "연결됨" : notionError ? "오류" : "미설정"}
           hint={
             notionReady
@@ -277,7 +525,21 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
           }
           footer={
             dbInfo && dbInfo.missing.length > 0 ? (
-              <p className="text-xs leading-5 text-amber-300">누락 속성: {dbInfo.missing.join(", ")}</p>
+              <div>
+                <p className="text-xs leading-5 text-amber-300">누락 속성 {dbInfo.missing.length}개</p>
+                <p className="mt-0.5 font-mono text-[11px] leading-4 text-faint">{dbInfo.missing.join(", ")}</p>
+                <form action={addMissingPropertiesAction} className="mt-2">
+                  <input type="hidden" name="back" value={backTo} />
+                  <SubmitButton size="sm" variant="secondary" className="w-full" pendingText="추가 중…">
+                    <IconDatabase className="h-3.5 w-3.5" />
+                    누락 속성 추가
+                  </SubmitButton>
+                </form>
+              </div>
+            ) : dbInfo ? (
+              <p className="text-xs leading-5 text-emerald-300">속성 이상 없음</p>
+            ) : notionError ? (
+              <p className="text-xs leading-5 text-muted">DB 공유·ID를 확인하세요</p>
             ) : undefined
           }
         />
@@ -291,16 +553,24 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
         <StatCard
           label="파이프라인"
           icon={<IconClock className="h-3.5 w-3.5" />}
-          tone={cfg.enabled ? "ok" : "off"}
+          tone={!cfg.enabled ? "off" : autoRunProblem ? "danger" : "ok"}
           value={cfg.enabled ? "켜짐" : "꺼짐"}
           hint={`${cfg.autoPublish ? "자동 게시" : "수동 게시"} · 게시 시 메일 ${cfg.emailOnPublish ? "발송" : "미발송"}`}
+          footer={
+            <p className="text-xs leading-5 text-muted">
+              마지막 실행:{" "}
+              <b className={autoRunProblem ? "text-rose-300" : "text-ink-2"}>
+                {xLastTickAt ? formatRelativeKst(xLastTickAt) : "기록 없음"}
+              </b>
+            </p>
+          }
         />
         <StatCard
           label="관제 계정"
           icon={<IconUsers className="h-3.5 w-3.5" />}
           tone={activeAccounts > 0 ? "info" : "off"}
           value={`${activeAccounts}개 감시 중`}
-          hint={`게시 완료 ${publishedCount}건${failedCount > 0 ? ` · 실패 ${failedCount}건` : ""}`}
+          hint={`게시 완료 ${publishedCount}건${failedCount > 0 ? ` · 실패 ${failedCount}건` : ""} (조회 ${items.length}건 기준)`}
         />
         <StatCard
           label="이미지 보관"
@@ -328,6 +598,7 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
             description="X 게시물 URL을 붙여넣으면 즉시 추출 → Gemini 요약까지 진행합니다."
           >
             <form action={ingestAction} className="space-y-4">
+              <input type="hidden" name="back" value={backTo} />
               <div>
                 <label className={labelClass} htmlFor="ingest-url">
                   게시물 URL <span className="text-rose-300">*</span>
@@ -381,21 +652,48 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
 
           {/* 수집 항목 */}
           <Panel
-            title={`수집 항목 (${items.length})`}
+            title={`수집 항목 (조회 ${items.length}건)`}
             icon={<IconInbox className="h-4 w-4 text-emerald-300" />}
-            description="Notion DB가 콘텐츠 Inbox이자 상태 저장소입니다."
+            description="Notion DB가 콘텐츠 Inbox이자 상태 저장소입니다. 검색·정렬·필터는 모두 서버에서 처리되어 URL로 공유할 수 있습니다."
             bodyClassName=""
           >
-            <div className="flex flex-wrap items-center gap-1.5 border-b border-line/70 px-5 py-3">
-              <FilterChips
-                ariaLabel="수집 항목 상태 필터"
-                items={chips.map((f) => ({
-                  href: f.key === "all" ? "/" : `/?status=${f.key}`,
-                  label: f.label,
-                  count: f.count,
-                  active: f.key === filterKey,
-                }))}
-              />
+            <div className="space-y-3 border-b border-line/70 px-5 py-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <SearchForm
+                  action="/"
+                  defaultValue={query}
+                  placeholder="제목·요약·작성자·카테고리·태그 검색"
+                  hidden={{
+                    status: filterKey === "all" ? undefined : filterKey,
+                    sort: sortKey === "new" ? undefined : sortKey,
+                    limit: limit > PAGE_SIZE ? String(limit) : undefined,
+                  }}
+                  className="sm:max-w-md"
+                />
+                <FilterChips
+                  ariaLabel="정렬 방식"
+                  items={SORTS.map((s) => ({
+                    href: hrefWith({ sort: s.key === "new" ? undefined : s.key }),
+                    label: s.label,
+                    active: s.key === sortKey,
+                  }))}
+                />
+              </div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <FilterChips
+                  ariaLabel="수집 항목 상태 필터"
+                  items={chips.map((f) => ({
+                    href: hrefWith({ status: f.key === "all" ? undefined : f.key }),
+                    label: f.label,
+                    count: f.count,
+                    active: f.key === filterKey,
+                  }))}
+                />
+                <p className="text-[11px] leading-4 text-faint">
+                  {query ? `검색어 “${query}” 기준 · ` : ""}Notion에서 최근 {items.length}건까지 조회했습니다
+                  {itemHasMore ? "" : " (마지막 페이지)"}
+                </p>
+              </div>
             </div>
 
             {notionError ? (
@@ -425,110 +723,197 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
               <div className="p-5">
                 <EmptyState
                   icon={<IconInbox className="h-5 w-5" />}
-                  title="조건에 맞는 항목이 없습니다"
-                  action={<LinkButton href="/">전체 보기</LinkButton>}
+                  title={query ? `“${query}”에 해당하는 항목이 없습니다` : "조건에 맞는 항목이 없습니다"}
+                  description={`조회한 ${items.length}건 중에서 찾지 못했습니다. 검색어를 바꾸거나 아래에서 더 불러오세요.`}
+                  action={
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                      <LinkButton href={hrefWith({ q: undefined, status: undefined })}>검색·필터 초기화</LinkButton>
+                      {itemHasMore && (
+                        <LinkButton href={hrefWith({ limit: String(Math.min(limit + PAGE_SIZE, MAX_ITEMS)) })}>
+                          다음 {PAGE_SIZE}건 더 보기
+                        </LinkButton>
+                      )}
+                    </div>
+                  }
                 />
               </div>
             ) : (
-              <ul className="divide-y divide-line/70">
-                {visibleItems.map((it) => (
-                  <li key={it.pageId} className="px-5 py-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <StatusBadge status={it.status} />
-                          {it.category && <Badge tone="muted">{it.category}</Badge>}
-                          <span className="text-xs text-faint">
-                            {it.sourceDate ? formatKst(it.sourceDate).slice(0, 11) : "날짜 미상"}
-                          </span>
-                          {it.author && <span className="text-xs text-faint">· {it.author}</span>}
-                        </div>
-                        <h3 className="mt-2 text-sm font-semibold leading-6 text-ink">{it.title || "(제목 없음)"}</h3>
-                        {it.summary && <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted">{it.summary}</p>}
-                        {it.note && (
-                          <p className="mt-1.5 flex items-start gap-1.5 text-xs leading-5 text-rose-300">
-                            <IconAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                            {it.note}
-                          </p>
-                        )}
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          {it.tags.map((t) => (
-                            <span
-                              key={t}
-                              className="rounded-full bg-surface-2 px-2 py-0.5 font-mono text-[11px] text-muted"
-                            >
-                              #{t}
+              <>
+                <ul className="divide-y divide-line/70">
+                  {visibleItems.map((it) => (
+                    <li key={it.pageId} className="px-5 py-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <StatusBadge status={it.status} />
+                            {it.category && <Badge tone="muted">{it.category}</Badge>}
+                            {it.sourceDate && (
+                              <span className="text-xs text-faint">
+                                발행 {formatKst(it.sourceDate).slice(0, 10)}
+                              </span>
+                            )}
+                            {it.author && <span className="text-xs text-faint">· {it.author}</span>}
+                            <span className="text-xs text-faint" title={formatKst(it.createdAt)}>
+                              · 수집 {formatRelativeKst(it.createdAt)}
                             </span>
-                          ))}
-                          {it.sourceUrl && (
-                            <a
-                              href={it.sourceUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-xs font-medium text-emerald-300 hover:underline"
+                          </div>
+                          <h3 className="mt-2 text-sm font-semibold leading-6 text-ink">{it.title || "(제목 없음)"}</h3>
+                          <p className="mt-1 text-xs leading-5 text-muted">{STATUS_NEXT[it.status]}</p>
+                          {it.summary && <p className="mt-1.5 line-clamp-2 text-xs leading-5 text-ink-2">{it.summary}</p>}
+                          {it.note && (
+                            <p
+                              className={`mt-1.5 flex items-start gap-1.5 text-xs leading-5 ${
+                                isFailureStatus(it.status) ? "text-rose-300" : "text-muted"
+                              }`}
                             >
-                              원문
-                              <IconExternal className="h-3 w-3" />
-                            </a>
+                              <IconAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                              {it.note}
+                            </p>
                           )}
-                          {it.notionUrl && (
-                            <a
-                              href={it.notionUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-1 text-xs font-medium text-muted hover:text-ink"
-                            >
-                              Notion
-                              <IconExternal className="h-3 w-3" />
-                            </a>
-                          )}
-                        </div>
-                      </div>
 
-                      <div className="flex w-full flex-wrap items-center gap-1.5 sm:w-auto sm:justify-end">
-                        {it.status !== "PUBLISHED" && (
-                          <>
-                            {(it.status === "SUMMARIZED" || it.status === "READY") && (
-                              <form action={publishAction}>
+                          {(it.summary || it.announcement || it.originalText) && (
+                            <div className="mt-1">
+                              {it.summary && (
+                                <DetailBlock label="요약 전문" meta={`${it.summary.length}자`}>
+                                  {it.summary}
+                                </DetailBlock>
+                              )}
+                              {it.announcement && (
+                                <DetailBlock label="공지문 (뉴스레터 도입부)" meta={`${it.announcement.length}자`}>
+                                  {it.announcement}
+                                </DetailBlock>
+                              )}
+                              {it.originalText && (
+                                <DetailBlock
+                                  label="원문"
+                                  meta={
+                                    it.originalText.length > ORIGINAL_PREVIEW
+                                      ? `${ORIGINAL_PREVIEW}자 / 전체 ${it.originalText.length.toLocaleString()}자`
+                                      : `${it.originalText.length}자`
+                                  }
+                                >
+                                  {it.originalText.length > ORIGINAL_PREVIEW
+                                    ? `${it.originalText.slice(0, ORIGINAL_PREVIEW)}\n\n… (전체 ${it.originalText.length.toLocaleString()}자 중 ${ORIGINAL_PREVIEW}자 표시)`
+                                    : it.originalText}
+                                </DetailBlock>
+                              )}
+                            </div>
+                          )}
+
+                          {isFailureStatus(it.status) && <RecoveryForm pageId={it.pageId} back={backTo} />}
+
+                          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                            {it.tags.map((t) => (
+                              <span
+                                key={t}
+                                className="rounded-full bg-surface-2 px-2 py-0.5 font-mono text-[11px] text-muted"
+                              >
+                                #{t}
+                              </span>
+                            ))}
+                            {it.sourceUrl && (
+                              <a
+                                href={it.sourceUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-xs font-medium text-emerald-300 hover:underline"
+                              >
+                                원문
+                                <IconExternal className="h-3 w-3" />
+                              </a>
+                            )}
+                            {it.landingUrl && (
+                              <a
+                                href={it.landingUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-xs font-medium text-sky-300 hover:underline"
+                              >
+                                <IconMegaphone className="h-3 w-3" />
+                                공지
+                              </a>
+                            )}
+                            {it.notionUrl && (
+                              <a
+                                href={it.notionUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-xs font-medium text-muted hover:text-ink"
+                              >
+                                Notion
+                                <IconExternal className="h-3 w-3" />
+                              </a>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex w-full flex-wrap items-center gap-1.5 sm:w-auto sm:justify-end">
+                          {it.status !== "PUBLISHED" && (
+                            <>
+                              {(it.status === "SUMMARIZED" || it.status === "READY") && (
+                                <form action={publishAction}>
+                                  <input type="hidden" name="pageId" value={it.pageId} />
+                                  <input type="hidden" name="back" value={backTo} />
+                                  <SubmitButton size="sm" pendingText="게시 중…">
+                                    <IconSend className="h-3.5 w-3.5" />
+                                    게시
+                                  </SubmitButton>
+                                </form>
+                              )}
+                              <form action={retryAction}>
                                 <input type="hidden" name="pageId" value={it.pageId} />
-                                <SubmitButton size="sm" pendingText="게시 중…">
-                                  <IconSend className="h-3.5 w-3.5" />
-                                  게시
+                                <input type="hidden" name="back" value={backTo} />
+                                <SubmitButton size="sm" variant="secondary" pendingText="처리 중…">
+                                  <IconRefresh className="h-3.5 w-3.5" />
+                                  다시 처리
                                 </SubmitButton>
                               </form>
-                            )}
-                            <form action={retryAction}>
-                              <input type="hidden" name="pageId" value={it.pageId} />
-                              <SubmitButton size="sm" variant="secondary" pendingText="처리 중…">
-                                <IconRefresh className="h-3.5 w-3.5" />
-                                다시 처리
-                              </SubmitButton>
-                            </form>
-                            <form action={ignoreAction}>
-                              <input type="hidden" name="pageId" value={it.pageId} />
-                              <SubmitButton size="sm" variant="ghost">
-                                <IconTrash className="h-3.5 w-3.5" />
-                                제외
-                              </SubmitButton>
-                            </form>
-                          </>
-                        )}
-                        {it.status === "PUBLISHED" && (
-                          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-300">
-                            <IconCheckCircle className="h-3.5 w-3.5" />
-                            게시 완료
-                          </span>
-                        )}
+                              <form action={ignoreAction}>
+                                <input type="hidden" name="pageId" value={it.pageId} />
+                                <input type="hidden" name="back" value={backTo} />
+                                <SubmitButton size="sm" variant="ghost">
+                                  <IconTrash className="h-3.5 w-3.5" />
+                                  제외
+                                </SubmitButton>
+                              </form>
+                            </>
+                          )}
+                          {it.status === "PUBLISHED" && (
+                            <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-300">
+                              <IconCheckCircle className="h-3.5 w-3.5" />
+                              게시 완료
+                            </span>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+                    </li>
+                  ))}
+                </ul>
+
+                {/* 더 보기 — 커서를 따라 조회 범위를 100건씩 늘린다 */}
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line/70 px-5 py-3">
+                  <p className="text-[11px] leading-4 text-faint">
+                    {itemHasMore
+                      ? `현재 ${items.length}건까지 불러왔습니다 · ${PAGE_SIZE}건씩 최대 ${MAX_ITEMS}건`
+                      : `더 불러올 항목이 없습니다 · 조회한 ${items.length}건이 전부입니다`}
+                  </p>
+                  {itemHasMore && limit < MAX_ITEMS && (
+                    <LinkButton size="sm" href={hrefWith({ limit: String(Math.min(limit + PAGE_SIZE, MAX_ITEMS)) })}>
+                      다음 {PAGE_SIZE}건 더 보기
+                    </LinkButton>
+                  )}
+                  {limit >= MAX_ITEMS && itemHasMore && (
+                    <span className="text-[11px] leading-4 text-amber-300">
+                      최대 {MAX_ITEMS}건까지 표시합니다 — 검색으로 좁혀보세요
+                    </span>
+                  )}
+                </div>
+              </>
             )}
           </Panel>
         </div>
 
-        {/* 사이드: 설정 + 계정 */}
+        {/* 사이드: 설정 + 계정 + 운영 정보 */}
         <div className="space-y-6">
           <Panel
             id="x-settings"
@@ -537,6 +922,7 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
             className="scroll-mt-24"
           >
             <form action={saveXSettingsAction} className="space-y-4">
+              <input type="hidden" name="back" value={backTo} />
               <div>
                 <label className={labelClass} htmlFor="x-notion-db">
                   Notion DB ID
@@ -551,6 +937,22 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
                   placeholder="32자리 (Notion DB URL 끝부분)"
                 />
                 <p className={hintClass}>Notion DB 링크 끝 32자리 문자열입니다.</p>
+                {cfg.notionDatabaseId && (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                    <CopyButton value={cfg.notionDatabaseId} label="DB ID 복사" />
+                    {dbInfo?.url && (
+                      <a
+                        href={dbInfo.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-xs font-medium text-muted hover:text-ink"
+                      >
+                        Notion에서 열기
+                        <IconExternal className="h-3 w-3" />
+                      </a>
+                    )}
+                  </div>
+                )}
               </div>
               <div>
                 <label className={labelClass} htmlFor="x-rsshub">
@@ -622,6 +1024,7 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
                   공유(••• → Connections)해야 합니다.
                 </p>
                 <form action={createNotionDbAction} className="mt-3 space-y-2">
+                  <input type="hidden" name="back" value={backTo} />
                   <label className="sr-only" htmlFor="parent-page">
                     Notion 부모 페이지 링크 또는 ID
                   </label>
@@ -646,6 +1049,7 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
             description="X 계정을 RSS 피드로 감시합니다. 무료 브릿지는 불안정할 수 있어 실패해도 수동 URL 수집은 그대로 동작합니다."
           >
             <form action={addAccountAction} className="space-y-3">
+              <input type="hidden" name="back" value={backTo} />
               <div>
                 <label className={labelClass} htmlFor="account-handle">
                   핸들
@@ -689,66 +1093,112 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
               </div>
             ) : (
               <ul className="mt-4 divide-y divide-line/70">
-                {accounts.map((a) => (
-                  <li key={a.id} className="py-3.5">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-mono text-sm font-semibold text-ink">@{a.handle}</span>
-                          <Badge tone={a.enabled ? "ok" : "muted"}>{a.enabled ? "감시 중" : "중지됨"}</Badge>
+                {accounts.map((a) => {
+                  const feedUrl = a.feedUrl || (cfg.rsshubBase ? `${cfg.rsshubBase}/twitter/user/${a.handle}` : "");
+                  return (
+                    <li key={a.id} className="py-3.5">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-mono text-sm font-semibold text-ink">@{a.handle}</span>
+                            <Badge tone={a.enabled ? "ok" : "muted"}>{a.enabled ? "감시 중" : "중지됨"}</Badge>
+                          </div>
+                          <p className="mt-1 truncate font-mono text-[11px] text-faint">
+                            {feedUrl || "(RSSHub 미설정 — 개별 피드 URL을 입력하세요)"}
+                          </p>
+                          <p className="mt-1 text-xs text-muted">
+                            확인: {formatKst(a.lastCheckedAt)}
+                            {a.lastCheckedAt && (
+                              <span className="text-faint"> ({formatRelativeKst(a.lastCheckedAt)})</span>
+                            )}
+                            {a.lastError && <span className="ml-1.5 text-rose-300">· {a.lastError}</span>}
+                          </p>
+                          {feedUrl && (
+                            <div className="mt-1.5">
+                              <CopyButton value={feedUrl} label="피드 URL 복사" />
+                            </div>
+                          )}
                         </div>
-                        <p className="mt-1 truncate font-mono text-[11px] text-faint">
-                          {a.feedUrl || `${cfg.rsshubBase || "(RSSHub 미설정)"}/twitter/user/${a.handle}`}
-                        </p>
-                        <p className="mt-1 text-xs text-muted">
-                          확인: {formatKst(a.lastCheckedAt)}
-                          {a.lastError && <span className="ml-1.5 text-rose-300">· {a.lastError}</span>}
-                        </p>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <form action={checkAccountAction}>
+                            <input type="hidden" name="id" value={a.id} />
+                            <input type="hidden" name="back" value={backTo} />
+                            <SubmitButton size="sm" variant="secondary" pendingText="확인 중…">
+                              <IconRefresh className="h-3.5 w-3.5" />
+                              확인
+                            </SubmitButton>
+                          </form>
+                          <form action={toggleAccountAction}>
+                            <input type="hidden" name="id" value={a.id} />
+                            <input type="hidden" name="back" value={backTo} />
+                            <SubmitButton size="sm" variant="ghost">
+                              {a.enabled ? "중지" : "시작"}
+                            </SubmitButton>
+                          </form>
+                          <form action={deleteAccountAction}>
+                            <input type="hidden" name="id" value={a.id} />
+                            <input type="hidden" name="back" value={backTo} />
+                            <SubmitButton
+                              size="sm"
+                              variant="danger"
+                              confirm={`@${a.handle} 계정을 삭제할까요?`}
+                              pendingText="삭제 중…"
+                            >
+                              <IconTrash className="h-3.5 w-3.5" />
+                              삭제
+                            </SubmitButton>
+                          </form>
+                        </div>
                       </div>
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <form action={checkAccountAction}>
-                          <input type="hidden" name="id" value={a.id} />
-                          <SubmitButton size="sm" variant="secondary" pendingText="확인 중…">
-                            <IconRefresh className="h-3.5 w-3.5" />
-                            확인
-                          </SubmitButton>
-                        </form>
-                        <form action={toggleAccountAction}>
-                          <input type="hidden" name="id" value={a.id} />
-                          <SubmitButton size="sm" variant="ghost">
-                            {a.enabled ? "중지" : "시작"}
-                          </SubmitButton>
-                        </form>
-                        <form action={deleteAccountAction}>
-                          <input type="hidden" name="id" value={a.id} />
-                          <SubmitButton
-                            size="sm"
-                            variant="danger"
-                            confirm={`@${a.handle} 계정을 삭제할까요?`}
-                            pendingText="삭제 중…"
-                          >
-                            <IconTrash className="h-3.5 w-3.5" />
-                            삭제
-                          </SubmitButton>
-                        </form>
-                      </div>
-                    </div>
-                  </li>
-                ))}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </Panel>
 
-          <div className={`${panelClass} p-4`}>
-            <p className="flex items-center gap-2 text-xs font-semibold text-ink-2">
-              <IconClock className="h-3.5 w-3.5 text-emerald-300" />
-              자동 수집 주기
+          {/* 운영 정보 — 마지막 실행과 로그를 항상 같은 자리에서 확인 */}
+          <Panel
+            title="운영 정보"
+            icon={<IconHistory className="h-4 w-4 text-emerald-300" />}
+            description="내장 스케줄러는 서버가 켜져 있는 동안 60초마다, cron은 호출될 때마다 실행됩니다."
+          >
+            <KeyValue
+              items={[
+                {
+                  label: "마지막 자동 실행",
+                  value: xLastTickAt ? (
+                    <>
+                      {formatRelativeKst(xLastTickAt)}
+                      <span className="block text-faint">{formatKst(xLastTickAt)}</span>
+                    </>
+                  ) : (
+                    "기록 없음"
+                  ),
+                },
+                {
+                  label: "마지막 실행 로그",
+                  value:
+                    tickLogLines.length > 0 ? (
+                      <span
+                        className={`font-mono text-[11px] leading-5 ${tickHasError ? "text-rose-300" : "text-ink-2"}`}
+                      >
+                        {tickLogLines.join(" / ")}
+                      </span>
+                    ) : (
+                      "기록 없음"
+                    ),
+                },
+                { label: "자동 게시", value: cfg.autoPublish ? "켜짐" : "꺼짐" },
+                { label: "조회 범위", value: `최근 ${items.length}건 (최대 ${MAX_ITEMS}건)` },
+              ]}
+            />
+            <p className="mt-3 text-xs leading-5 text-muted">
+              서버리스 환경에서는{" "}
+              <code className="rounded bg-surface-2 px-1 font-mono">GET /api/cron</code>을 외부 크론으로 1분마다
+              호출하세요. 호출이 멈추면 위 <b className="text-ink-2">자동 실행 중단 경고</b>가 뜹니다.
             </p>
-            <p className="mt-1.5 text-xs leading-5 text-muted">
-              서버가 켜져 있는 동안 내장 스케줄러가 주기적으로 피드를 확인합니다. 서버리스 환경에서는{" "}
-              <code className="rounded bg-surface-2 px-1 font-mono">GET /api/cron</code>을 외부 크론으로 호출하세요.
-            </p>
-          </div>
+          </Panel>
         </div>
       </div>
     </div>
