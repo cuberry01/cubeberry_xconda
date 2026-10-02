@@ -50,6 +50,16 @@ interface NotionPage {
   properties?: Record<string, unknown>;
 }
 
+interface NotionBlock {
+  id: string;
+  type?: string;
+  image?: {
+    type?: string;
+    external?: { url?: string };
+    file?: { url?: string };
+  };
+}
+
 const NOTION_VERSION = "2022-06-28";
 const NOTION_BASE = "https://api.notion.com/v1";
 
@@ -218,6 +228,72 @@ export async function updateItem(cfg: XcondaConfig, pageId: string, patch: ItemP
 export async function getItem(cfg: XcondaConfig, pageId: string): Promise<XItem | null> {
   const data = (await notionFetch(cfg, `/pages/${pageId}`)) as NotionPage;
   return data?.id ? mapPage(data) : null;
+}
+
+function isSupportedExternalImage(url: string): boolean {
+  try {
+    return /\.(bmp|gif|heic|jpe?g|png|svg|tiff?)$/i.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
+
+function readBlockImageUrl(block: NotionBlock): string {
+  if (block.type !== "image" || !block.image) return "";
+  return block.image.external?.url ?? block.image.file?.url ?? "";
+}
+
+/** Add/replace the Xconda image block in the Notion page body (in addition to Image URL). */
+export async function syncImageBlock(
+  cfg: XcondaConfig,
+  pageId: string,
+  imageUrl: string,
+  previousImageUrl = "",
+): Promise<boolean> {
+  const targetUrl = imageUrl.trim();
+  if (!targetUrl || !isSupportedExternalImage(targetUrl)) return false;
+
+  const blocks: NotionBlock[] = [];
+  let cursor = "";
+  for (let page = 0; page < 10; page++) {
+    const query = new URLSearchParams({ page_size: "100" });
+    if (cursor) query.set("start_cursor", cursor);
+    const data = (await notionFetch(cfg, `/blocks/${pageId}/children?${query.toString()}`)) as {
+      results?: NotionBlock[];
+      has_more?: boolean;
+      next_cursor?: string | null;
+    };
+    blocks.push(...(data.results ?? []));
+    if (!data.has_more || !data.next_cursor) break;
+    cursor = data.next_cursor;
+  }
+
+  const existing = blocks.find((block) => readBlockImageUrl(block) === targetUrl);
+  if (!existing) {
+    await notionFetch(cfg, `/blocks/${pageId}/children`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        children: [
+          {
+            object: "block",
+            type: "image",
+            image: { type: "external", external: { url: targetUrl }, caption: [] },
+          },
+        ],
+      }),
+    });
+  }
+
+  const oldUrl = previousImageUrl.trim();
+  if (oldUrl && oldUrl !== targetUrl) {
+    for (const block of blocks) {
+      if (readBlockImageUrl(block) === oldUrl) {
+        await notionFetch(cfg, `/blocks/${block.id}`, { method: "DELETE" });
+      }
+    }
+  }
+
+  return !existing;
 }
 
 export interface QueryOptions {

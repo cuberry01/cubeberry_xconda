@@ -1,6 +1,6 @@
 # Supabase + Google Sheets 연동
 
-이 앱은 Google Sheets를 콘텐츠 원본으로 읽고, Supabase PostgreSQL에는 발송 상태·구독자·로그를 저장합니다. 브라우저에서 Supabase를 직접 호출하지 않으므로 `NEXT_PUBLIC_SUPABASE_*`, anon key, service-role key를 추가할 필요가 없습니다.
+이 앱은 Google Sheets를 콘텐츠 원본으로 읽고, Supabase PostgreSQL에는 발송 상태·구독자·로그를 저장합니다. DB 연결과 메일 발송만 사용할 때는 `NEXT_PUBLIC_SUPABASE_*`, anon key, service-role key가 필요하지 않습니다. **X 이미지의 원본 CDN 주소 만료를 막으려면 선택적으로 Supabase Storage를 설정**할 수 있습니다. 이때 service-role key는 서버 환경변수 `SUPABASE_SERVICE_ROLE_KEY`로만 사용하며 브라우저나 Git에 노출하면 안 됩니다.
 
 - Supabase project: `yxryzqzdspmwvibbzxqf`
 - Content sheet: `1CavwYt1DHE91E1m41gf1TzCDd48HroP0D8YXTgOlsjM`
@@ -17,6 +17,23 @@ cp .env.example .env
 ```
 
 > 데이터베이스 비밀번호, pooler URI, service-role key는 채팅이나 Git에 올리지 마세요. `.env`는 Git ignore 대상입니다.
+
+## 1-A. (선택) X 이미지 영구 보관용 Storage
+
+X·웹 원본 이미지가 만료되더라도 Notion 페이지(지원 형식은 이미지 블록), `/notices`, 뉴스레터에서 계속 표시되게 하려면:
+
+1. Supabase Dashboard → **Storage** → **New bucket**에서 `xconda-images` 버킷을 만듭니다.
+2. **Public bucket**을 켭니다. 읽기는 이미지 표시를 위해 공개하지만, 업로드는 서버의 service-role key로만 합니다.
+3. 가능하면 버킷 파일 크기 제한을 **8 MB**, 허용 MIME을 `image/jpeg`, `image/png`, `image/gif`, `image/webp`, `image/avif`로 설정합니다.
+4. 서버 환경변수에 아래 값을 넣습니다. `SUPABASE_URL`은 Project URL이고, key는 Dashboard의 **Project Settings → API Keys → service_role** 값입니다.
+
+```text
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<service-role secret>
+SUPABASE_STORAGE_BUCKET=xconda-images  # 생략 가능
+```
+
+service-role key에는 전체 권한이 있으므로 **`NEXT_PUBLIC_` 접두사를 붙이지 말고**, Vercel에서도 Server Environment Variable로만 등록하세요. 이미지는 SHA-256 기준으로 중복 저장을 줄이고, 지원되는 이미지 형식만 최대 8 MB까지 복사합니다. 미설정 또는 업로드 실패 시에는 원본 URL을 사용해 게시·메일 발송이 계속됩니다. 관리자 **X 수집** 화면의 “이미지 보관” 카드에서 설정 상태를 확인할 수 있습니다.
 
 ## 2. 테이블 생성
 

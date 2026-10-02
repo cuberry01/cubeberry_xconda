@@ -13,7 +13,8 @@ import { getAIEngine, type SummarizeResult } from "./ai";
 import { getXcondaConfig, missingConfig, resolveBaseUrl, type XcondaConfig } from "./config";
 import { extractXPost, extractWebPage } from "./extract";
 import { checkDueAccounts } from "./feeds";
-import { createItem, findBySourceUrl, getItem, queryItems, updateItem } from "./notion";
+import { storePublicImage } from "./image-storage";
+import { createItem, findBySourceUrl, getItem, queryItems, syncImageBlock, updateItem } from "./notion";
 import { canonicalizeUrl, findSimilarTitle, parseStatusUrl } from "./similarity";
 import { FAILURE_STATUSES, itemAnchor, STATUS_LABELS, type XItem, type XStatus } from "./types";
 import { truncate } from "./util";
@@ -127,20 +128,39 @@ export async function processItem(pageId: string): Promise<ProcessResult> {
   }
 
   // 1) 본문 확보 (관리자가 직접 붙여넣은 원문이 있으면 건너뜀)
+  let imageWarnings: string[] = [];
   if (!item.originalText.trim()) {
     const isX = Boolean(parseStatusUrl(item.sourceUrl));
     try {
       const post = isX ? await extractXPost(cfg, item.sourceUrl) : await extractWebPage(item.sourceUrl);
       const author = item.author || [post.handle, post.authorName].filter(Boolean).join(" · ");
+      const storedImage = await storePublicImage(post.imageUrl || item.imageUrl);
+      if (storedImage.status === "failed") imageWarnings.push(`이미지 보관 실패: ${storedImage.error}`);
+      if (storedImage.url) {
+        try {
+          await syncImageBlock(cfg, pageId, storedImage.url, item.imageUrl);
+        } catch (e) {
+          imageWarnings.push(`Notion 이미지 블록 생성 실패: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+      const extractionNote = [`추출: ${post.strategy}`, ...imageWarnings].join(" · ");
       await updateItem(cfg, pageId, {
         originalText: post.text,
         author,
         sourceDate: post.createdAt,
-        imageUrl: post.imageUrl,
+        imageUrl: storedImage.url,
         status: "EXTRACTED",
-        note: `추출: ${post.strategy}`,
+        note: truncate(extractionNote, 1900),
       });
-      item = { ...item, originalText: post.text, author, sourceDate: post.createdAt, status: "EXTRACTED" };
+      item = {
+        ...item,
+        originalText: post.text,
+        author,
+        sourceDate: post.createdAt,
+        imageUrl: storedImage.url,
+        status: "EXTRACTED",
+        note: truncate(extractionNote, 1900),
+      };
     } catch (e) {
       const msg = truncate(e instanceof Error ? e.message : String(e), 1900);
       await updateItem(cfg, pageId, { status: "EXTRACT_FAILED", note: msg });
@@ -195,7 +215,7 @@ export async function processItem(pageId: string): Promise<ProcessResult> {
     category: ai.category,
     tags: ai.tags,
     status: "SUMMARIZED",
-    note: "",
+    note: truncate(imageWarnings.join(" · "), 1900),
   });
 
   if (cfg.autoPublish) {
@@ -212,6 +232,18 @@ export async function publishItem(pageId: string): Promise<{ ok: boolean; messag
   const item = await getItem(cfg, pageId);
   if (!item) throw new Error("Notion에서 항목을 찾을 수 없습니다.");
 
+  const storedImage = await storePublicImage(item.imageUrl);
+  const imageUrl = storedImage.url || item.imageUrl;
+  const imageWarnings: string[] = [];
+  if (storedImage.status === "failed") imageWarnings.push(`이미지 보관 실패: ${storedImage.error}`);
+  if (imageUrl) {
+    try {
+      await syncImageBlock(cfg, pageId, imageUrl, item.imageUrl);
+    } catch (e) {
+      imageWarnings.push(`Notion 이미지 블록 생성 실패: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   const baseUrl = await resolveBaseUrl();
   const landingUrl = baseUrl ? `${baseUrl}/notices#${itemAnchor(pageId)}` : "";
 
@@ -219,22 +251,25 @@ export async function publishItem(pageId: string): Promise<{ ok: boolean; messag
     published: true,
     landingUrl,
     status: "PUBLISHED",
-    note: "",
+    ...(imageUrl !== item.imageUrl ? { imageUrl } : {}),
+    note: truncate(imageWarnings.join(" · "), 1900),
   });
 
   // 메일 대기열(contents)에 추가 — 기존 시트 메일러의 예약 발송 흐름을 그대로 탄다.
   let mailNote = "";
   if (cfg.emailOnPublish) {
     const body = [item.announcement, item.summary, `원문: ${item.sourceUrl}`].filter(Boolean).join("\n\n");
-    const inserted = await db
+    const subject = item.title || "공지";
+    const link = landingUrl || item.sourceUrl;
+    await db
       .insert(contents)
       .values({
         key: `xconda:${pageId}`,
         rowNumber: 9_000_000, // 시트 대기열 뒤에 붙는다
-        subject: item.title || "공지",
+        subject,
         body,
-        link: item.sourceUrl,
-        imageUrl: item.imageUrl || "",
+        link,
+        imageUrl,
         recipients: "",
         scheduledAt: null,
         rawSchedule: "",
@@ -243,15 +278,23 @@ export async function publishItem(pageId: string): Promise<{ ok: boolean; messag
         source: "xconda",
         status: "pending",
       })
-      .onConflictDoNothing({ target: contents.key })
-      .returning();
-    mailNote = inserted.length ? " 메일 대기열에 추가했습니다." : " (메일은 이미 대기열에 있습니다)";
+      .onConflictDoUpdate({
+        target: contents.key,
+        set: { subject, body, link, imageUrl, updatedAt: new Date() },
+      });
+    mailNote = " 뉴스레터 콘텐츠를 등록/갱신했습니다.";
   }
 
   revalidatePath("/notices");
+  const imageNote =
+    storedImage.status === "stored" ? " 이미지가 Supabase Storage에 보관되었습니다." :
+    storedImage.status === "failed" ? " 이미지 원본 주소로 계속 게시했습니다." : "";
+  const warningNote = imageWarnings.some((warning) => warning.startsWith("Notion 이미지 블록"))
+    ? " Notion 이미지 블록은 추가하지 못했지만 Image URL 속성은 유지했습니다."
+    : "";
   return {
     ok: true,
-    message: `게시 완료${landingUrl ? ` — ${landingUrl}` : ""}${mailNote}`,
+    message: `게시 완료${landingUrl ? ` — ${landingUrl}` : ""}${mailNote}${imageNote}${warningNote}`,
   };
 }
 

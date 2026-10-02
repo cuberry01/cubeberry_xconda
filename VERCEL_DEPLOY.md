@@ -40,11 +40,15 @@
 | `CRON_SECRET` | 긴 랜덤 값 (예: `openssl rand -hex 24` 출력) | 권장 |
 | `SMTP_USER` / `SMTP_PASS` / `SMTP_HOST` / `SMTP_PORT` / `MAIL_FROM` | SMTP 발송용 (예: Gmail 앱 비밀번호) | 발송하려면 ✅ |
 | `RESEND_API_KEY` | Resend 발송용 (SMTP 대신) | 선택 |
+| `SUPABASE_URL` | Supabase Project URL, 이미지 영구 보관용 | 선택 |
+| `SUPABASE_SERVICE_ROLE_KEY` | Storage 이미지 업로드용 서버 비밀키 (**NEXT_PUBLIC 금지**) | 선택 |
+| `SUPABASE_STORAGE_BUCKET` | 이미지 공개 버킷 이름 (기본 `xconda-images`) | 선택 |
 
 > **주의**
 > - 서버리스 환경에서 `DATABASE_URL`은 **pooler URI**를 사용하세요. 직접 연결(5432)은
 >   함수 인스턴스마다 커넥션이 늘어나 Supabase 커넥션 제한에 걸릴 수 있습니다.
 > - 비밀번호에 특수문자가 있으면 URL 인코딩이 필요합니다 (Dashboard이 안내하는 URI 복사 권장).
+> - 이미지 보관을 켜려면 Supabase에 `xconda-images` **public bucket**을 먼저 만들고 위 Storage 변수를 설정하세요. 자세한 내용은 `SUPABASE_SETUP.md`를 참고하세요. service-role key는 반드시 서버 전용으로 두세요.
 
 5. **Deploy** 클릭. `vercel.json`의 크론 설정(`5 0 * * *` = 매일 09:05 KST)이 자동 적용됩니다.
 
