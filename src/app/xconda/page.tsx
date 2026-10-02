@@ -19,7 +19,9 @@ import {
 } from "@/components/icons";
 import {
   Badge,
+  Callout,
   EmptyState,
+  FilterChips,
   LinkButton,
   PageHeader,
   Panel,
@@ -235,25 +237,28 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
       />
 
       {missing.length > 0 && (
-        <div className="mb-6 flex flex-wrap items-start gap-3 rounded-2xl border border-amber-400/30 bg-amber-400/10 px-4 py-3.5 text-sm">
-          <IconAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" />
-          <div className="min-w-0 flex-1">
-            <p className="font-semibold text-amber-200">설정이 아직 완료되지 않았습니다</p>
-            <p className="mt-1 text-xs leading-5 text-amber-100/80">
-              배포 환경변수와 아래 <b>X 수집 설정</b>을 채우면 바로 동작합니다. 자세한 방법은 저장소의{" "}
-              <code className="rounded bg-amber-400/15 px-1 font-mono">XCONDA_SETUP.md</code>를 참고하세요.
-            </p>
-            <ul className="mt-2 flex flex-wrap gap-1.5">
-              {missing.map((m) => (
-                <li key={m}>
-                  <Badge tone="warn" className="font-mono">
-                    {m}
-                  </Badge>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
+        <Callout
+          tone="warn"
+          title="설정이 아직 완료되지 않았습니다"
+          className="mb-6"
+          action={
+            <LinkButton href="#x-settings" size="sm" variant="secondary">
+              설정으로 이동
+            </LinkButton>
+          }
+        >
+          배포 환경변수와 아래 <b className="text-amber-100">X 수집 설정</b>을 채우면 바로 동작합니다. 자세한 방법은
+          저장소의 <code className="rounded bg-amber-400/15 px-1 font-mono">XCONDA_SETUP.md</code>를 참고하세요.
+          <ul className="mt-2 flex flex-wrap gap-1.5">
+            {missing.map((m) => (
+              <li key={m}>
+                <Badge tone="warn" className="font-mono">
+                  {m}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        </Callout>
       )}
 
       {/* 상태 카드 */}
@@ -382,32 +387,22 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
             bodyClassName=""
           >
             <div className="flex flex-wrap items-center gap-1.5 border-b border-line/70 px-5 py-3">
-              {chips.map((f) => {
-                const active = f.key === filterKey;
-                return (
-                  <Link
-                    key={f.key}
-                    href={f.key === "all" ? "/" : `/?status=${f.key}`}
-                    aria-current={active ? "true" : undefined}
-                    className={`inline-flex min-h-9 items-center gap-1.5 rounded-full px-3 text-xs font-semibold ring-1 ring-inset transition-colors duration-150 ${
-                      active
-                        ? "bg-primary/15 text-emerald-300 ring-primary/30"
-                        : "bg-surface-2/50 text-muted ring-line/80 hover:text-ink"
-                    }`}
-                  >
-                    {f.label}
-                    <span className="font-mono text-[11px] text-faint">{f.count}</span>
-                  </Link>
-                );
-              })}
+              <FilterChips
+                ariaLabel="수집 항목 상태 필터"
+                items={chips.map((f) => ({
+                  href: f.key === "all" ? "/" : `/?status=${f.key}`,
+                  label: f.label,
+                  count: f.count,
+                  active: f.key === filterKey,
+                }))}
+              />
             </div>
 
             {notionError ? (
               <div className="p-5">
-                <div className="flex items-start gap-2 rounded-xl border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
-                  <IconAlert className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span className="leading-6">Notion 조회 실패: {notionError}</span>
-                </div>
+                <Callout tone="danger" title="Notion 조회 실패">
+                  {notionError}
+                </Callout>
               </div>
             ) : !notionReady ? (
               <div className="p-5">

@@ -105,3 +105,37 @@
 - [x] 44px 터치 타깃 · 모바일 하단 탭에 가려지는 콘텐츠 없음(`main` 하단 패딩)
 - [x] 빈 상태마다 다음 행동 안내, 로딩 상태는 스피너 + `aria-busy`
 - [x] 이미지 `aspect-ratio` + `loading="lazy"`로 CLS 억제
+
+---
+
+## 8. 확장 컴포넌트 (UI 고도화 1단계)
+
+`src/components/ui.tsx`에 추가된 공통 조각. **화면에서 Tailwind 문자열을 새로 조합하기 전에 여기 있는지 먼저 확인**합니다.
+
+| 컴포넌트 | 쓰는 곳 | 규칙 |
+| --- | --- | --- |
+| `Callout(tone)` | 정적 안내·경고 박스 | `info / ok / warn / danger`. **결과 알림은 `Flash`** (라이브 리전), 정적 안내만 `Callout`. |
+| `Field` | 폼 한 칸 | 라벨 + 입력 + 힌트를 한 단위로. 라벨은 항상 보이게, `optional`이면 "(선택)" 자동 표기. |
+| `SearchForm` | 목록 검색 | `<form method="get">` — JS 없이 동작, URL 공유 가능. 다른 필터는 `hidden`으로 보존. |
+| `FilterChips` | 상태 필터 | 전부 링크. 선택 항목은 `aria-current="true"` + 색 동시 표기, 카운트는 `font-mono`. |
+| `Meter` | 비율(성공률 등) | `role="progressbar"` + 텍스트 수치 병기. 색만으로 상태를 전달하지 않음. |
+| `KeyValue` | 상세 정보 나열 | `dl` 기반, 값은 우측 정렬, 긴 값은 줄바꿈. |
+| `SectionHeading` | 폼 내부 그룹 제목 | 패널 없이 구역만 나눌 때. |
+| `StatCard(href)` | 상태 카드 | `href`를 주면 카드 전체가 링크(우측 상단 화살표 표시). |
+| `Panel(footer)` | 패널 하단 고정 영역 | 액션/요약을 본문과 분리해 붙일 때. |
+| `CopyButton` | ID·URL 복사 | 클립보드 실패 시 폴백 + "복사 실패" 텍스트 노출. |
+
+아이콘은 `src/components/icons.tsx`만 사용하고(이모지 금지), 새 아이콘도 같은 스트로크(1.75px) 규칙으로 추가합니다.
+
+## 9. 상태 화면 규칙 (loading / error / not-found)
+
+| 파일 | 역할 | 규칙 |
+| --- | --- | --- |
+| `app/**/loading.tsx` | 라우트 이동 중 | 실제 레이아웃과 **같은 골격**(`components/skeletons.tsx`). 스피너만 있는 화면 금지. |
+| `app/error.tsx` | 라우트 오류 경계 | 원인 메시지 + **다시 시도** + 자주 발생하는 원인 3가지(DB URL·마이그레이션·시크릿). |
+| `app/not-found.tsx` | 404 | 다음 행동(대시보드/공지)을 버튼으로 제시. |
+
+공통 규칙
+- 스켈레톤은 `motion-safe:animate-pulse`만 사용하고, `prefers-reduced-motion`에서는 정지한 블록이 됩니다.
+- 오류 화면에도 **다음 행동**이 있어야 합니다(뒤로 가기만 있는 화면 금지).
+- `aria-live`는 `Flash`가 담당합니다. `Callout`은 정적이므로 라이브 리전을 붙이지 않습니다.
