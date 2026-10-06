@@ -170,9 +170,20 @@ export function rowsToSubscribers(rows: string[][]) {
     dataRows = rows.slice(headerIdx);
     if (emailIdx < 0) return [];
   }
-  return dataRows
-    .map((r) => ({ email: (r[emailIdx] ?? "").trim().toLowerCase(), name: nameIdx >= 0 ? (r[nameIdx] ?? "").trim() : "" }))
-    .filter((s) => isEmail(s.email));
+  const unique = new Map<string, { email: string; name: string }>();
+  for (const row of dataRows) {
+    const subscriber = {
+      email: (row[emailIdx] ?? "").trim().toLowerCase(),
+      name: nameIdx >= 0 ? (row[nameIdx] ?? "").trim() : "",
+    };
+    if (!isEmail(subscriber.email)) continue;
+
+    const previous = unique.get(subscriber.email);
+    // 한 번의 bulk upsert에 같은 이메일이 두 번 들어가면 PostgreSQL이 실패한다.
+    // 중복 행에서는 비어 있지 않은 최신 이름을 우선한다.
+    if (!previous || subscriber.name) unique.set(subscriber.email, subscriber);
+  }
+  return [...unique.values()];
 }
 
 export function isEmail(s: string) {

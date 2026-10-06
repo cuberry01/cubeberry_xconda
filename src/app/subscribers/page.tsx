@@ -10,6 +10,8 @@ import { desc } from "drizzle-orm";
 import { addSubscribersAction, deleteSubscriberAction, syncAction, toggleSubscriberAction } from "../actions";
 
 export const dynamic = "force-dynamic";
+// 이 페이지의 Server Action이 대용량 구독자 시트를 동기화할 시간을 확보한다.
+export const maxDuration = 60;
 
 export const metadata = { title: "구독자" };
 

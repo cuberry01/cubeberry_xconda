@@ -28,9 +28,9 @@ export async function syncAction() {
       r.warnings.length ? ` · 주의: ${r.warnings.join(" / ")}` : ""
     }`;
   } catch (e) {
-    back("/", errMsg(e), true);
+    back("/subscribers", errMsg(e), true);
   }
-  back("/", msg);
+  back("/subscribers", msg);
 }
 
 export async function toggleEnabledAction() {
