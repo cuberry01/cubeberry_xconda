@@ -88,6 +88,29 @@ export default async function SettingsPage({ searchParams }: { searchParams: Fla
                 />
                 <p className={hintClass}>발송일시가 비어 있는 콘텐츠(대기열)와 날짜만 쓴 콘텐츠에 적용됩니다.</p>
               </div>
+              <div>
+                <label className={labelClass} htmlFor="daily-limit">
+                  하루 발송 한도 (명)
+                </label>
+                <input
+                  id="daily-limit"
+                  type="number"
+                  name="dailyLimit"
+                  min={0}
+                  max={100000}
+                  step={1}
+                  defaultValue={s.dailyLimit}
+                  className={inputClass}
+                  required
+                />
+                <p className={hintClass}>
+                  한국 시간 자정에 초기화됩니다. Gmail(무료)은 하루 약 500통 제한이라 기본값은 500입니다. 0은
+                  무제한. 수신자가 남은 한도보다 많으면 나머지는 다음 날 기본 발송 시간에 이어서 보냅니다.
+                </p>
+              </div>
+            </div>
+
+            <div>
               <fieldset>
                 <legend className={labelClass}>대기열 발송 요일</legend>
                 <div className="flex flex-wrap gap-1.5">

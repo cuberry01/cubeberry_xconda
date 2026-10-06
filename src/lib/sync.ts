@@ -2,8 +2,12 @@ import { randomBytes } from "crypto";
 import { db } from "@/db";
 import { contents, subscribers } from "@/db/schema";
 import { and, notInArray, sql } from "drizzle-orm";
+import { checkImageAccessible, resolveImageUrl } from "./drive";
 import { fetchSheetRows, rowsToContents, rowsToSubscribers } from "./sheet";
 import { getSettings, updateSettings } from "./settings";
+
+// 드라이브 이미지 접근 확인은 시트 동기화를 느리게 하지 않도록 건수를 제한한다.
+const MAX_IMAGE_CHECKS = 20;
 
 export function newToken() {
   return randomBytes(16).toString("hex");
@@ -37,6 +41,25 @@ export async function syncSheet(): Promise<{
     if (!s.sheetUrl) throw new Error("설정에서 콘텐츠 스프레드시트 URL을 입력해주세요.");
     const rows = await fetchSheetRows(s.sheetUrl);
     const { items, warnings } = rowsToContents(rows, s.defaultSendTime);
+
+    // 구글 드라이브 공유 링크는 메일에 바로 심을 수 없어 직접 이미지 주소로 변환한다.
+    // 변환된 주소가 실제로 읽히는지 확인해 공유 설정 문제를 경고로 알려준다.
+    let checked = 0;
+    for (const it of items) {
+      if (!it.imageUrl) continue;
+      const resolved = resolveImageUrl(it.imageUrl);
+      if (resolved.url !== it.imageUrl) it.imageUrl = resolved.url;
+      if (resolved.driveFileId && checked < MAX_IMAGE_CHECKS) {
+        checked++;
+        const access = await checkImageAccessible(resolved.url);
+        if (!access.ok) {
+          warnings.push(
+            `${it.rowNumber}행: 이미지를 읽을 수 없습니다 (${access.reason}). 드라이브 파일 공유 설정이 '링크가 있는 모든 사용자 – 뷰어'인지 확인하세요.`,
+          );
+        }
+      }
+    }
+
     const now = new Date();
 
     for (const it of items) {

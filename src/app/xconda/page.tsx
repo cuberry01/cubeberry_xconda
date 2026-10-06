@@ -495,8 +495,8 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
 
       {!cfg.enabled && (
         <Callout
-          tone="warn"
-          title="파이프라인이 꺼져 있습니다"
+          tone="info"
+          title="X 수집이 일시 중단되었습니다"
           className="mb-6"
           action={
             <LinkButton href="#x-settings" size="sm" variant="secondary">
@@ -504,8 +504,8 @@ export default async function XcondaPage({ searchParams }: { searchParams: PageP
             </LinkButton>
           }
         >
-          자동 수집(cron)이 동작하지 않습니다. 아래 X 수집 설정의 <b className="text-amber-100">파이프라인 사용</b>
-          을 켜야 새 게시물을 처리합니다. 수동 URL 수집은 지금도 동작합니다.
+          메일 발송 서비스에 집중하는 동안 자동 수집(cron)을 멈춰 두었습니다. 다시 수집하려면 아래 X 수집 설정의{" "}
+          <b className="text-sky-100">파이프라인 사용</b>을 켜세요. 수동 URL 수집은 지금도 동작합니다.
         </Callout>
       )}
 

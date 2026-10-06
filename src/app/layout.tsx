@@ -5,10 +5,11 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: {
-    default: "Xconda | AI 소식 수집·요약",
-    template: "%s | Xconda",
+    default: "시트 메일러 | 스프레드시트 뉴스레터 발송",
+    template: "%s | 시트 메일러",
   },
-  description: "X 게시물을 수집하고 AI로 요약해 Notion과 공지로 발행하는 Xconda 대시보드입니다.",
+  description:
+    "구글 스프레드시트 콘텐츠와 구글 드라이브 이미지를 불러와 구독자 전체에게 뉴스레터를 예약 발송하는 시트 메일러입니다.",
 };
 
 export const viewport: Viewport = {

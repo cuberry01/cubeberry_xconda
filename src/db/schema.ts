@@ -17,12 +17,15 @@ export const settings = pgTable("settings", {
   fromName: text("from_name").notNull().default("뉴스레터"),
   testEmail: text("test_email").notNull().default(""),
   baseUrl: text("base_url").notNull().default(""),
+  // 하루 발송 한도 (0 = 무제한). Gmail 무료 계정은 하루 약 500통 제한이 있어 기본값 500.
+  dailyLimit: integer("daily_limit").notNull().default(500),
   lastQueueSentDate: text("last_queue_sent_date"),
   lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
   lastSyncError: text("last_sync_error"),
   lastTickAt: timestamp("last_tick_at", { withTimezone: true }),
   // Xconda (X → Gemini 요약 → Notion → 공지)
-  xEnabled: boolean("x_enabled").notNull().default(true),
+  // 당분간 X 수집을 중단하고 메일 발송에 집중하기 위해 기본값은 꺼짐.
+  xEnabled: boolean("x_enabled").notNull().default(false),
   xNotionDatabaseId: text("x_notion_database_id").notNull().default(""),
   xRsshubBase: text("x_rsshub_base").notNull().default(""),
   xAutoPublish: boolean("x_auto_publish").notNull().default(false),
@@ -48,7 +51,7 @@ export const contents = pgTable("contents", {
   inSheet: boolean("in_sheet").notNull().default(true),
   // sheet (구글 시트) | xconda (X 수집 파이프라인)
   source: text("source").notNull().default("sheet"),
-  // pending | sending | sent | failed
+  // pending | sending | sent | failed | partial (부분 발송 — 하루 한도로 일부만 보내고 다음 날 이어서 발송)
   status: text("status").notNull().default("pending"),
   sentAt: timestamp("sent_at", { withTimezone: true }),
   sentCount: integer("sent_count").notNull().default(0),

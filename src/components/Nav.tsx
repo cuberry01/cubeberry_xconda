@@ -3,25 +3,27 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ComponentType } from "react";
-import { IconHistory, IconInbox, IconMegaphone, IconSettings, IconUsers, type IconProps } from "./icons";
+import { IconHistory, IconInbox, IconMail, IconMegaphone, IconSettings, IconUsers, type IconProps } from "./icons";
 
 type NavGroup = "collect" | "newsletter" | "public";
 
 type NavItem = { href: string; label: string; icon: ComponentType<IconProps>; group: NavGroup };
 
-/* 화면 순서: 수집 → 뉴스레터 → 공개. 데스크톱에서는 그룹 사이에 구분선을 둡니다. */
+/* 화면 순서: 뉴스레터 → 수집 → 공개. 데스크톱에서는 그룹 사이에 구분선을 둡니다.
+   메일 서비스에 집중하는 동안 홈은 뉴스레터 대시보드이고, X 수집은 별도 메뉴로 물러나 있습니다. */
 const items: NavItem[] = [
-  { href: "/", label: "X 수집", icon: IconInbox, group: "collect" },
+  { href: "/", label: "대시보드", icon: IconMail, group: "newsletter" },
   { href: "/subscribers", label: "구독자", icon: IconUsers, group: "newsletter" },
   { href: "/logs", label: "발송 기록", icon: IconHistory, group: "newsletter" },
   { href: "/settings", label: "설정", icon: IconSettings, group: "newsletter" },
+  { href: "/xconda", label: "X 수집", icon: IconInbox, group: "collect" },
   { href: "/notices", label: "공지", icon: IconMegaphone, group: "public" },
 ];
 
-const GROUP_ORDER: NavGroup[] = ["collect", "newsletter", "public"];
+const GROUP_ORDER: NavGroup[] = ["newsletter", "collect", "public"];
 
 function isActive(path: string, href: string) {
-  return href === "/" ? path === "/" || path.startsWith("/xconda") : path.startsWith(href);
+  return href === "/" ? path === "/" : path.startsWith(href);
 }
 
 /** 현재 경로가 속한 메뉴 항목 (모바일 헤더의 현재 위치 표시에 사용) */

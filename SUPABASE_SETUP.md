@@ -52,6 +52,12 @@ npm run db:migrate
 
 `settings`, `contents`, `subscribers`, `send_logs` 테이블이 생성됩니다. 테이블에는 RLS가 활성화되며, 이 앱의 서버 PostgreSQL 연결은 정상 동작하고 공개 REST API는 기본적으로 닫혀 있습니다.
 
+### 기존 설치 업그레이드
+
+이미 테이블이 있다면 변경분만 적용합니다 (여러 번 실행해도 안전합니다).
+
+- `supabase/migrations/20261006000000_mail_quota.sql` — `settings.daily_limit`(하루 발송 한도, 기본 500) 추가, X 수집 자동 실행 기본값 끔.
+
 ## 3. Google Sheet 확인
 
 시트는 이미 공개 export로 읽을 수 있는 상태입니다. 앱은 아래 URL을 기본 콘텐츠 시트로 사용합니다.
@@ -65,6 +71,8 @@ https://docs.google.com/spreadsheets/d/1CavwYt1DHE91E1m41gf1TzCDd48HroP0D8YXTgOl
 ```text
 발송일시 | 제목 | 본문 | 링크 | 이미지 | 수신자 | 사용
 ```
+
+`이미지` 열에는 공개 이미지 주소뿐만 아니라 **구글 드라이브 공유 링크**도 넣을 수 있습니다. 파일 공유 설정이 '링크가 있는 모든 사용자 – 뷰어'라면 메일에 표시되는 주소로 자동 변환됩니다.
 
 현재 시트의 첫 데이터 행은 `{{이름}}님, 10월 첫 소식입니다`에서 쉼표 때문에 셀이 한 칸씩 밀려 있습니다. Google Sheets에서는 쉼표가 CSV 구분자가 아니므로 제목을 **하나의 셀**에 아래처럼 넣어주세요.
 

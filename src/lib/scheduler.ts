@@ -3,6 +3,7 @@ import { contents, settings, type Content, type Settings } from "@/db/schema";
 import { and, asc, eq, gte, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { sendContent } from "./dispatch";
 import { runXcondaTick } from "./xconda/pipeline";
+import { getQuotaStatus } from "./quota";
 import { getSettings, updateSettings } from "./settings";
 import { syncSheet } from "./sync";
 import { formatKst, fromKst, kstDateKey, kstParts } from "./time";
@@ -77,6 +78,34 @@ export async function tick(): Promise<string[]> {
     }
 
     const sendable = or(eq(contents.inSheet, true), eq(contents.source, "xconda"));
+    const p = kstParts(now);
+    const days = parseSendDays(s.sendDays);
+    const [h, m] = s.defaultSendTime.split(":").map(Number);
+    const minutesNow = p.hour * 60 + p.minute;
+    const minutesSlot = (h || 0) * 60 + (m || 0);
+    const today = kstDateKey(now);
+
+    const quotaExhausted = async () => {
+      const q = await getQuotaStatus(s, now);
+      return !q.unlimited && q.remaining <= 0;
+    };
+
+    // 0) 부분 발송 이어 보내기 — 하루 한도로 일부만 보낸 콘텐츠를 다음 날 기본 발송 시각부터 재개한다.
+    if (days.includes(p.weekday) && minutesNow >= minutesSlot && !(await quotaExhausted())) {
+      const partials = await db
+        .select()
+        .from(contents)
+        .where(and(eq(contents.status, "partial"), eq(contents.active, true), sendable))
+        .orderBy(asc(contents.id));
+      for (const c of partials) {
+        const lastAttempt = c.updatedAt ?? c.sentAt ?? c.createdAt;
+        if (kstDateKey(lastAttempt) === today) continue; // 오늘은 이미 시도했다
+        if (c.scheduledAt && c.scheduledAt.getTime() > now.getTime()) continue; // 예약 시각 전에는 재개하지 않는다
+        const r = await sendContent(c.id);
+        log.push(`[이어 보내기] "${c.subject}" → ${JSON.stringify(r)}`);
+        if (await quotaExhausted()) break;
+      }
+    }
 
     // 1) Items with explicit send date/time
     const due = await db
@@ -93,18 +122,21 @@ export async function tick(): Promise<string[]> {
       )
       .orderBy(asc(contents.scheduledAt));
     for (const c of due) {
+      // 한도가 소진됐으면 보내는 대신 부분 발송으로 전환해 다음 날 이어 보낸다 (기한 만료로 유실 방지).
       const r = await sendContent(c.id);
       log.push(`[예약] "${c.subject}" → ${JSON.stringify(r)}`);
+      if (await quotaExhausted()) break;
     }
 
-    // 2) Queue items (no date) — one per send day at the default time
-    const p = kstParts(now);
-    const days = parseSendDays(s.sendDays);
-    const [h, m] = s.defaultSendTime.split(":").map(Number);
-    const minutesNow = p.hour * 60 + p.minute;
-    const minutesSlot = (h || 0) * 60 + (m || 0);
-    const today = kstDateKey(now);
+    // 2) Queue items (no date) — one per send day at the default time.
+    //    부분 발송 중인 콘텐츠가 남아 있으면 새 콘텐츠를 꺼내지 않고 이어 보내기에 집중한다.
+    const [partialLeft] = await db
+      .select({ id: contents.id })
+      .from(contents)
+      .where(eq(contents.status, "partial"))
+      .limit(1);
     if (
+      !partialLeft &&
       days.includes(p.weekday) &&
       minutesNow >= minutesSlot &&
       minutesNow < minutesSlot + QUEUE_WINDOW_MIN &&
