@@ -47,7 +47,7 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
             다시 시도
           </button>
           <LinkButton href="/" variant="secondary">
-            X 수집으로
+            대시보드로
           </LinkButton>
           <LinkButton href="/settings" variant="ghost">
             <IconSettings className="h-3.5 w-3.5" />
@@ -67,7 +67,8 @@ export default function Error({ error, reset }: { error: Error & { digest?: stri
             </li>
             <li>
               · 마이그레이션 미실행 — <code className="rounded bg-surface-2 px-1 font-mono">supabase/migrations</code>의
-              SQL을 Supabase SQL Editor에서 실행하세요.
+              SQL을 Supabase SQL Editor에서 실행하세요. (누락된 <code className="rounded bg-surface-2 px-1 font-mono">settings</code>
+              컬럼은 서버가 한 번 자동 복구를 시도합니다. 복구 권한이 없으면 서버 로그의 경고를 확인하세요.)
             </li>
             <li>
               · Notion/Gemini 시크릿 만료 — Vercel 환경변수를 갱신한 뒤 재배포하세요.
