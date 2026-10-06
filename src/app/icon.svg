@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="시트 메일러">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1b2336" />
+      <stop offset="1" stop-color="#0f172a" />
+    </linearGradient>
+    <linearGradient id="envelope" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4ade80" />
+      <stop offset="1" stop-color="#22c55e" />
+    </linearGradient>
+  </defs>
+  <!-- 다크 옵스 배경 (앱 테마: canvas #0f172a / surface #1b2336, 액션 #22c55e) -->
+  <rect width="64" height="64" rx="14" fill="url(#bg)" />
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="13.25" fill="none" stroke="#22c55e" stroke-opacity="0.35" stroke-width="1.5" />
+  <!-- 봉투 -->
+  <rect x="12" y="17" width="40" height="30" rx="6" fill="url(#envelope)" />
+  <path d="M16.5 22.5 32 34.5l15.5-12" fill="none" stroke="#06210f" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round" />
+</svg>
