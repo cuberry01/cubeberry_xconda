@@ -107,6 +107,7 @@
   .b-failed{background:#ffe4e6;color:#be123c}
   .b-hold{background:#e2e8f0;color:#64748b}
   .b-late{background:#ffedd5;color:#c2410c}
+  .b-partial{background:#fef3c7;color:#b45309}
 
   /* ── UI 버튼 모양 ── */
   .ui{display:inline-block; border-radius:8px; padding:2px 10px; font-size:13px; font-weight:700; border:1px solid var(--indigo); background:var(--indigo); color:#fff; white-space:nowrap}
@@ -360,8 +361,9 @@
             </tr>
             <tr>
               <td><b>이미지</b><span class="opt">선택</span></td>
-              <td>메일 최상단 배너로 들어갑니다. 반드시 <b>인터넷에 공개된 이미지 주소(https://…)</b>여야 합니다. 가로 600px 이상 권장.<br />
-                <span class="muted">구글 드라이브 파일을 그대로 붙이면 안 보이는 경우가 많습니다.</span></td>
+              <td>메일 최상단 배너로 들어갑니다. <b>인터넷에 공개된 이미지 주소(https://…)</b> 또는 <b>구글 드라이브 공유 링크</b>를 붙여넣으세요. 가로 600px 이상 권장.<br />
+                · <b>구글 드라이브</b>: 파일을 <b>‘링크가 있는 모든 사용자 – 뷰어’</b>로 공유한 뒤 공유 링크를 그대로 붙여넣으면 됩니다. 시스템이 메일에 보이는 주소로 자동 변환합니다.<br />
+                <span class="muted">공유 설정이 안 되어 있으면 동기화할 때 경고가 표시됩니다.</span></td>
             </tr>
             <tr>
               <td><b>수신자</b><span class="opt">선택</span></td>
@@ -471,6 +473,7 @@
             <tr><td><span class="badge b-sched">예약됨</span></td><td>발송 시각을 기다리는 중 (정상)</td><td>그냥 두시면 됩니다.</td></tr>
             <tr><td><span class="badge b-wait">대기</span></td><td>대기열에 있어 순서를 기다리는 중</td><td>먼저 보내려면 시트에서 위쪽 행으로 옮기거나 <span class="ui sec">지금 발송</span>.</td></tr>
             <tr><td><span class="badge b-sending">발송 중</span></td><td>지금 보내고 있습니다</td><td>잠시 기다린 뒤 새로고침하세요.</td></tr>
+            <tr><td><span class="badge b-partial">부분 발송</span></td><td>하루 발송 한도(기본 500명)까지 보내고 나머지는 다음 날로 넘어간 상태</td><td>그냥 두시면 <b>다음 발송일에 자동으로 이어서</b> 보냅니다. 이미 받은 분에게는 중복으로 가지 않습니다. 지금 마저 보내려면 <span class="ui sec">이어 보내기</span> (한도가 남아 있을 때만 동작).</td></tr>
             <tr><td><span class="badge b-sent">발송 완료</span></td><td>발송 성공 (몇 명에게 갔는지 함께 표시)</td><td><span class="tab">발송 기록</span>에서 상세 확인.</td></tr>
             <tr><td><span class="badge b-failed">실패</span></td><td>발송 실패 (사유가 빨간 글씨로 표시)</td><td>사유 확인 → <span class="ui gho">대기로</span> 누른 뒤 재시도.</td></tr>
             <tr><td><span class="badge b-hold">보류</span></td><td>시트 <b>사용</b> 칸에 N·보류 등이 적혀 있음</td><td>보내려면 시트에서 <code>Y</code>로 바꾸고 다시 불러오기.</td></tr>
@@ -514,6 +517,7 @@
             <tr><td><b>콘텐츠 스프레드시트 URL</b></td><td>메일 내용을 적는 시트 주소. 특정 탭을 쓰려면 <b>그 탭을 연 상태</b>의 주소(<code>#gid=…</code> 포함)를 붙여넣으세요.</td></tr>
             <tr><td><b>구독자 시트 URL</b> <span class="opt">선택</span></td><td>‘구독자’ 탭 주소. 비워두셔도 됩니다.</td></tr>
             <tr><td><b>기본 발송 시간 (KST)</b></td><td>대기열·날짜만 적은 메일이 나가는 시각. <b>권장 09:00</b></td></tr>
+            <tr><td><b>하루 발송 한도 (명)</b></td><td>하루에 보내는 최대 인원. <b>기본 500</b> (Gmail 무료 계정 기준). 한국 시간 자정에 초기화됩니다. 수신자가 한도보다 많으면 나머지는 <b>다음 날 자동으로 이어서 발송</b>됩니다. 0을 넣으면 무제한.</td></tr>
             <tr><td><b>대기열 발송 요일</b></td><td>요일 버튼을 눌러 선택. <b>기본 월~금</b>. 선택한 요일마다 대기열에서 1건씩 나갑니다. <span style="color:var(--rose)">하나도 선택하지 않으면 대기열 메일은 영영 나가지 않습니다.</span></td></tr>
             <tr><td><b>보내는 사람 이름</b></td><td>받는 분 메일함에 표시되는 이름과 메일 상단 배너 문구. 예: <code>큐베리</code></td></tr>
             <tr><td><b>테스트 수신 이메일</b></td><td>피디님 주소를 넣어두시면 <span class="ui gho">테스트</span> 버튼이 바로 동작합니다.</td></tr>

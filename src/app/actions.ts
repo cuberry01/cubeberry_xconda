@@ -20,7 +20,9 @@ function errMsg(e: unknown) {
   return e instanceof Error ? e.message : String(e);
 }
 
-export async function syncAction() {
+export async function syncAction(formData?: FormData) {
+  const returnTo = formData ? String(formData.get("returnTo") || "") : "";
+  const path = returnTo === "/" ? "/" : "/subscribers";
   let msg: string;
   try {
     const r = await syncSheet();
@@ -28,9 +30,9 @@ export async function syncAction() {
       r.warnings.length ? ` · 주의: ${r.warnings.join(" / ")}` : ""
     }`;
   } catch (e) {
-    back("/subscribers", errMsg(e), true);
+    back(path, errMsg(e), true);
   }
-  back("/subscribers", msg);
+  back(path, msg);
 }
 
 export async function toggleEnabledAction() {
@@ -47,8 +49,14 @@ export async function sendNowAction(formData: FormData) {
   } catch (e) {
     back("/", errMsg(e), true);
   }
-  if (!r.ok) back("/", r.error ?? r.reason ?? "발송 실패", true);
-  back("/", `발송 완료: ${r.sent}/${r.total}명${r.failed ? ` (실패 ${r.failed})` : ""}`);
+  if (!r.ok) back("/", r.error ?? r.reason ?? "발송 실패", r.deferred ? false : true);
+  const notes = [
+    r.failed ? `실패 ${r.failed}명` : "",
+    r.deferred ? `남은 ${r.deferred}명은 내일 이어서 발송됩니다` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  back("/", `발송 완료: ${r.sent}/${r.total}명${notes ? ` (${notes})` : ""}`);
 }
 
 export async function testSendAction(formData: FormData) {
@@ -87,14 +95,26 @@ export async function saveSettingsAction(formData: FormData) {
   const fromName = String(formData.get("fromName") || "").trim() || "뉴스레터";
   const testEmail = String(formData.get("testEmail") || "").trim();
   const baseUrl = String(formData.get("baseUrl") || "").trim().replace(/\/$/, "");
+  const dailyLimit = Number(formData.get("dailyLimit") ?? 500);
 
   if (sheetUrl && !parseSheetUrl(sheetUrl)) back("/settings", "콘텐츠 시트 URL이 올바르지 않습니다.", true);
   if (subscribersSheetUrl && !parseSheetUrl(subscribersSheetUrl))
     back("/settings", "구독자 시트 URL이 올바르지 않습니다.", true);
   if (!/^\d{2}:\d{2}$/.test(defaultSendTime)) back("/settings", "발송 시간 형식이 올바르지 않습니다.", true);
   if (testEmail && !isEmail(testEmail)) back("/settings", "테스트 이메일 형식이 올바르지 않습니다.", true);
+  if (!Number.isFinite(dailyLimit) || dailyLimit < 0 || dailyLimit > 100000)
+    back("/settings", "하루 발송 한도는 0 이상 100000 이하의 숫자로 입력하세요. (0 = 무제한)", true);
 
-  await updateSettings({ sheetUrl, subscribersSheetUrl, defaultSendTime, sendDays, fromName, testEmail, baseUrl });
+  await updateSettings({
+    sheetUrl,
+    subscribersSheetUrl,
+    defaultSendTime,
+    sendDays,
+    fromName,
+    testEmail,
+    baseUrl,
+    dailyLimit: Math.round(dailyLimit),
+  });
   back("/settings", "설정을 저장했습니다.");
 }
 

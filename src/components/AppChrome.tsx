@@ -21,14 +21,17 @@ export function AppChrome({ children }: { children: ReactNode }) {
 
       <header className="sticky top-0 z-20 border-b border-line/80 bg-canvas/85 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
-          <Link href="/" className="flex items-center gap-2.5 rounded-xl" aria-label="Xconda 홈">
-            <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 font-mono text-base font-bold text-emerald-950 shadow-lg shadow-emerald-500/20">
-              𝕏
+          <Link href="/" className="flex items-center gap-2.5 rounded-xl" aria-label="시트 메일러 홈">
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 text-emerald-950 shadow-lg shadow-emerald-500/20">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" className="h-4.5 w-4.5" aria-hidden="true">
+                <rect x="3" y="5" width="18" height="14" rx="2.5" />
+                <path d="m3.5 7 8.5 6 8.5-6" />
+              </svg>
             </span>
             <span className="flex flex-col leading-none">
-              <span className="text-[15px] font-bold tracking-tight text-ink">Xconda</span>
+              <span className="text-[15px] font-bold tracking-tight text-ink">시트 메일러</span>
               <span className="mt-1 font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-faint">
-                AI news pipeline
+                spreadsheet → mail
               </span>
             </span>
           </Link>
@@ -50,10 +53,9 @@ export function AppChrome({ children }: { children: ReactNode }) {
 
       <footer className="mx-auto hidden w-full max-w-6xl items-center justify-between gap-4 px-4 pb-8 text-xs text-faint sm:flex">
         <span>
-          X 게시물 → 본문 추출 → Gemini 요약 → Notion → 공지. 설정 방법은{" "}
-          <span className="font-mono text-muted">XCONDA_SETUP.md</span> 참고.
+          스프레드시트 콘텐츠 + 구글 드라이브 이미지 → 구독자 전체 뉴스레터. 시트 작성 방법은 대시보드 하단 참고.
         </span>
-        <span className="shrink-0 font-mono text-[11px] text-muted">cron 자동 수집 · 15분 주기</span>
+        <span className="shrink-0 font-mono text-[11px] text-muted">하루 500통 · 예약 · 이어 보내기</span>
       </footer>
 
       <MobileNav />
