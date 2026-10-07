@@ -90,7 +90,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Fla
               </div>
               <div>
                 <label className={labelClass} htmlFor="daily-limit">
-                  하루 발송 한도 (명)
+                  앱 하루 발송 한도 (명)
                 </label>
                 <input
                   id="daily-limit"
@@ -104,8 +104,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Fla
                   required
                 />
                 <p className={hintClass}>
-                  한국 시간 자정에 초기화됩니다. Gmail(무료)은 하루 약 500통 제한이라 기본값은 500입니다. 0은
-                  무제한. 수신자가 남은 한도보다 많으면 나머지는 다음 날 기본 발송 시간에 이어서 보냅니다.
+                  이 앱의 자체 제한이며 한국 시간 자정에 초기화됩니다. 기본값 500은 Gmail 무료 계정의 통상 한도를 고려한
+                  값입니다. Gmail 제공자 한도는 별도 적용되며, 550 5.4.5 응답 시 발송을 중지합니다. 0은 앱 한도만
+                  해제하며 Gmail 한도를 늘리지 않습니다. 초과분은 다음 발송 가능 시간에 이어서 보냅니다.
                 </p>
               </div>
             </div>
@@ -197,7 +198,7 @@ SMTP_HOST=smtp.gmail.com   (선택)
 SMTP_PORT=465              (선택)
 MAIL_FROM=you@gmail.com    (선택)`}</pre>
                 <p className="mt-1.5 text-[11px] leading-5 text-faint">
-                  Gmail은 2단계 인증 후 &apos;앱 비밀번호&apos;를 발급해 사용합니다 (하루 약 500통 제한).
+                  Gmail은 2단계 인증 후 &apos;앱 비밀번호&apos;를 발급해 사용합니다. Gmail 한도 초과(550 5.4.5) 시 같은 배치의 재시도를 멈추고 24시간 쿨다운합니다. 대량 뉴스레터는 수신 동의와 도메인 인증을 지원하는 이메일 서비스(예: Resend)를 사용하세요.
                 </p>
               </div>
               <div className="rounded-xl border border-line/70 bg-canvas/50 p-3">

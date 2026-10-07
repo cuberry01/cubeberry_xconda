@@ -2,10 +2,16 @@ import { db } from "@/db";
 import { contents, sendLogs, subscribers, type Content } from "@/db/schema";
 import { and, eq, inArray } from "drizzle-orm";
 import { sendMail } from "./mailer";
+import {
+  errorMessage,
+  GMAIL_DAILY_SENDING_LIMIT_ERROR,
+  isGmailDailySendingLimitError,
+} from "./mail-errors";
 import { getQuotaStatus, sentEmailsForContent } from "./quota";
 import { getSettings } from "./settings";
 import { splitEmails } from "./sheet";
 import { renderEmail } from "./template";
+import { formatKst } from "./time";
 
 function unsubUrl(baseUrl: string, token?: string) {
   if (!baseUrl || !token) return undefined;
@@ -32,27 +38,25 @@ export interface SendResult {
   sent?: number;
   failed?: number;
   total?: number;
-  /** 하루 한도로 다음 날로 넘어간 인원 */
+  /** 이미 성공 로그가 있어 중복 방지로 건너뛴 인원 */
+  alreadySent?: number;
+  /** 하루 한도로 다음 발송 가능 시간으로 넘어간 인원 */
   deferred?: number;
+  /** Gmail 550 5.4.5 한도 응답으로 발송이 일시 중단되었는지 여부 */
+  providerBlocked?: boolean;
   error?: string | null;
   reason?: string;
 }
 
 /**
- * 콘텐츠를 수신자에게 발송한다. 하루 발송 한도(settings.daily_limit)를 지키며,
- * 수신자가 남은 한도보다 많으면 오늘 보낼 수 있는 만큼만 보내고 콘텐츠를
- * `partial`(부분 발송) 상태로 남겨 다음 날 스케줄러가 이어서 보낸다.
+ * 콘텐츠를 수신자에게 발송한다. 앱 설정 한도를 지키고, Gmail의 일일 한도 응답(550 5.4.5)이
+ * 오면 해당 배치를 즉시 중단한다. 발송하지 못한 수신자는 `partial` 상태로 남겨 재개한다.
  *
- * - `partial` 상태 콘텐츠는 이미 받은 사람을 제외하고 이어서 보낸다 (중복 발송 없음).
- * - 그 외 상태에서의 발송(수동 재발송 포함)은 수신자 전원에게 새로 보낸다.
- * - `force`는 pending이 아닌 콘텐츠(발송 완료/실패/부분 발송)의 수동 발송을 허용한다.
+ * - 발송 상태와 관계없이 `sent` 로그가 있는 수신자는 제외한다. 수동 재시도도 미발송 주소만 대상으로 한다.
+ * - `force`는 pending이 아닌 콘텐츠(발송 완료/실패/부분 발송)의 수동 재시도를 허용한다.
  */
 export async function sendContent(contentId: number, force = false): Promise<SendResult> {
   const allowed = force ? ["pending", "failed", "sent", "partial"] : ["pending", "partial"];
-  const [before] = await db
-    .select({ status: contents.status, sentCount: contents.sentCount })
-    .from(contents)
-    .where(eq(contents.id, contentId));
   const claimed = await db
     .update(contents)
     .set({ status: "sending", updatedAt: new Date(), error: null })
@@ -60,7 +64,6 @@ export async function sendContent(contentId: number, force = false): Promise<Sen
     .returning();
   const c = claimed[0];
   if (!c) return { ok: false, reason: "이미 발송 중이거나 발송할 수 없는 콘텐츠입니다." };
-  const resume = before?.status === "partial";
 
   const s = await getSettings();
   const recipients = await resolveRecipients(c);
@@ -72,23 +75,50 @@ export async function sendContent(contentId: number, force = false): Promise<Sen
     return { ok: false, total: 0, error: "수신자가 없습니다. 구독자를 추가하거나 '수신자' 열을 확인하세요." };
   }
 
-  // 이어 보내기(부분 발송 재개)일 때는 이미 받은 사람을 제외한다.
-  let targets = recipients;
-  if (resume) {
-    const done = await sentEmailsForContent(contentId);
-    targets = recipients.filter((r) => !done.has(r.email));
-    if (!targets.length) {
-      await db
-        .update(contents)
-        .set({ status: "sent", error: null, updatedAt: new Date(), sentAt: new Date() })
-        .where(eq(contents.id, c.id));
-      return { ok: true, sent: 0, total: recipients.length, deferred: 0 };
-    }
+  // 부분 발송, 수동 재시도, 대기 상태 복구 등 어떤 경로에서도 성공한 주소는 다시 보내지 않는다.
+  const delivered = await sentEmailsForContent(contentId);
+  const alreadySent = recipients.filter((r) => delivered.has(r.email)).length;
+  const targets = recipients.filter((r) => !delivered.has(r.email));
+  if (!targets.length) {
+    await db
+      .update(contents)
+      .set({
+        status: "sent",
+        sentCount: alreadySent,
+        failCount: 0,
+        error: null,
+        updatedAt: new Date(),
+        sentAt: c.sentAt ?? new Date(),
+      })
+      .where(eq(contents.id, c.id));
+    return { ok: true, sent: 0, total: recipients.length, alreadySent, deferred: 0 };
   }
 
-  // 하루 한도 — 남은 만큼만 오늘 보내고 나머지는 다음 날로 넘긴다.
+  // 제공자에서 Gmail 550 5.4.5가 확인된 뒤에는 24시간 동안 재시도하지 않는다.
   const quota = await getQuotaStatus(s);
-  const deferred = quota.limit > 0 && targets.length > quota.remaining ? targets.length - quota.remaining : 0;
+  if (quota.providerBlocked) {
+    const deferred = targets.length;
+    const error = `Gmail 일일 발송 한도(550 5.4.5) 초과가 감지되어 발송을 중지했습니다. ${
+      quota.providerBlockedUntil ? `미발송분은 ${formatKst(quota.providerBlockedUntil)} 이후 재개됩니다.` : "24시간 후 재개됩니다."
+    }`;
+    await db
+      .update(contents)
+      .set({ status: "partial", error, updatedAt: new Date() })
+      .where(eq(contents.id, c.id));
+    return {
+      ok: false,
+      sent: 0,
+      total: recipients.length,
+      alreadySent,
+      deferred,
+      providerBlocked: true,
+      error,
+      reason: error,
+    };
+  }
+
+  // 앱 설정 한도 — 남은 만큼만 오늘 보내고 나머지는 다음 날로 넘긴다.
+  let deferred = quota.limit > 0 && targets.length > quota.remaining ? targets.length - quota.remaining : 0;
   const batch = deferred > 0 ? targets.slice(0, quota.remaining) : targets;
 
   if (!batch.length) {
@@ -105,6 +135,7 @@ export async function sendContent(contentId: number, force = false): Promise<Sen
       ok: false,
       sent: 0,
       total: recipients.length,
+      alreadySent,
       deferred: targets.length,
       reason: `오늘 발송 한도(${quota.limit}통)를 모두 사용했습니다. 남은 ${targets.length}명은 내일 이어서 발송됩니다.`,
     };
@@ -112,6 +143,7 @@ export async function sendContent(contentId: number, force = false): Promise<Sen
 
   let sent = 0;
   let failed = 0;
+  let providerBlocked = false;
   let lastError: string | null = null;
 
   for (const r of batch) {
@@ -145,7 +177,8 @@ export async function sendContent(contentId: number, force = false): Promise<Sen
       });
     } catch (e) {
       failed++;
-      lastError = e instanceof Error ? e.message : String(e);
+      providerBlocked = isGmailDailySendingLimitError(e);
+      lastError = providerBlocked ? GMAIL_DAILY_SENDING_LIMIT_ERROR : errorMessage(e);
       await db.insert(sendLogs).values({
         contentId: c.id,
         subject: mail.subject,
@@ -153,14 +186,22 @@ export async function sendContent(contentId: number, force = false): Promise<Sen
         status: "failed",
         error: lastError,
       });
+      // A provider-wide quota rejection is not recipient-specific: stop immediately instead of
+      // generating one identical failure for every remaining address.
+      if (providerBlocked) break;
     }
   }
 
-  // 부분 발송 이어 보내기면 이전 배치까지 누적해서 표시한다.
-  const baseSent = resume && before ? before.sentCount : 0;
+  // If Gmail rejected the batch, all addresses not confirmed sent remain eligible for retry.
+  // The sent log is the source of truth, so a partially-sent campaign will resume without duplicates.
+  if (providerBlocked) deferred = Math.max(0, targets.length - sent);
+
+  // 이 콘텐츠에서 이미 성공한 수신자 수는 기존 로그를 기준으로 누적한다.
+  const baseSent = alreadySent;
   const status = deferred > 0 ? "partial" : sent > 0 ? "sent" : "failed";
-  const error =
-    deferred > 0
+  const error = providerBlocked
+    ? `Gmail 일일 발송 한도(550 5.4.5) 초과 — ${deferred}명은 발송을 멈췄으며 24시간 후 자동으로 이어서 발송됩니다.`
+    : deferred > 0
       ? `${baseSent + sent}명 발송 완료 — 남은 ${deferred}명은 내일 이어서 발송됩니다.`
       : failed > 0
         ? `${failed}건 실패: ${lastError}`
@@ -177,13 +218,28 @@ export async function sendContent(contentId: number, force = false): Promise<Sen
     })
     .where(eq(contents.id, c.id));
 
-  return { ok: sent > 0, sent, failed, total: recipients.length, deferred, error };
+  return {
+    ok: sent > 0,
+    sent,
+    failed,
+    total: recipients.length,
+    alreadySent,
+    deferred,
+    providerBlocked,
+    error,
+    reason: providerBlocked ? error ?? GMAIL_DAILY_SENDING_LIMIT_ERROR : undefined,
+  };
 }
 
 export async function sendTest(contentId: number, to: string) {
   const [c] = await db.select().from(contents).where(eq(contents.id, contentId));
   if (!c) throw new Error("콘텐츠를 찾을 수 없습니다.");
   const s = await getSettings();
+  const quota = await getQuotaStatus(s);
+  if (quota.providerBlocked) {
+    const until = quota.providerBlockedUntil ? formatKst(quota.providerBlockedUntil) : "24시간 후";
+    throw new Error(`Gmail 일일 발송 한도(550 5.4.5) 응답으로 발송이 중지되어 있습니다. ${until} 이후 다시 시도하세요.`);
+  }
   const mail = renderEmail({
     subject: `[테스트] ${c.subject}`,
     body: c.body,
@@ -197,7 +253,7 @@ export async function sendTest(contentId: number, to: string) {
     await db.insert(sendLogs).values({ contentId: c.id, subject: mail.subject, email: to, status: "test", provider });
     return provider;
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = isGmailDailySendingLimitError(e) ? GMAIL_DAILY_SENDING_LIMIT_ERROR : errorMessage(e);
     await db.insert(sendLogs).values({ contentId: c.id, subject: mail.subject, email: to, status: "failed", error: msg });
     throw e;
   }

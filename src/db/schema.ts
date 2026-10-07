@@ -17,7 +17,7 @@ export const settings = pgTable("settings", {
   fromName: text("from_name").notNull().default("뉴스레터"),
   testEmail: text("test_email").notNull().default(""),
   baseUrl: text("base_url").notNull().default(""),
-  // 하루 발송 한도 (0 = 무제한). Gmail 무료 계정은 하루 약 500통 제한이 있어 기본값 500.
+  // 앱 자체 하루 발송 한도 (0 = 앱 한도 없음). Gmail 같은 메일 제공자의 별도 한도는 계속 적용된다.
   dailyLimit: integer("daily_limit").notNull().default(500),
   lastQueueSentDate: text("last_queue_sent_date"),
   lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),

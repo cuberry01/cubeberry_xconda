@@ -20,7 +20,7 @@ import { getQuotaStatus } from "@/lib/quota";
 import { GRACE_MS, nextQueueSlot, parseSendDays, plannedTimes } from "@/lib/scheduler";
 import { getSettings, updateSettings } from "@/lib/settings";
 import { splitEmails } from "@/lib/sheet";
-import { formatKst, kstDateKey } from "@/lib/time";
+import { formatKst, formatRelativeKst, kstDateKey } from "@/lib/time";
 import { asc, count, eq, or } from "drizzle-orm";
 import { headers } from "next/headers";
 import {
@@ -96,9 +96,9 @@ export default async function Home({ searchParams }: { searchParams: FlashParams
       <PageHeader
         eyebrow="Newsletter"
         title="뉴스레터 대시보드"
-        description={`스프레드시트에서 콘텐츠를 불러와 구독자 전체에게 발송합니다. 하루 발송 한도는 ${
+        description={`스프레드시트에서 콘텐츠를 불러와 구독자 전체에게 발송합니다. 앱 자체 하루 한도는 ${
           quota.unlimited ? "무제한" : `${quota.limit}명`
-        }(한국 시간 자정 초기화)이며, 한도를 넘는 인원은 다음 날 자동으로 이어서 보냅니다.`}
+        }(한국 시간 자정 초기화)이며, 메일 제공자 한도는 별도로 적용됩니다. 제공자가 발송을 거부하면 자동 중단합니다.`}
         actions={
           <>
             <form action={syncAction}>
@@ -129,13 +129,24 @@ export default async function Home({ searchParams }: { searchParams: FlashParams
           참고.
         </Callout>
       )}
-      {!quota.unlimited && quota.remaining <= 0 && (
-        <Callout tone="warn" title={`오늘 발송 한도(${quota.limit}통)를 모두 사용했습니다`} className="mb-4">
+      {quota.providerBlocked && (
+        <Callout tone="danger" title="Gmail 일일 발송 한도 초과 (550 5.4.5)" className="mb-4">
+          Google이 계정 발송 한도를 거부해 대량 발송을 중단했습니다. 자동 재시도는{" "}
+          <b>{quota.providerBlockedUntil ? formatKst(quota.providerBlockedUntil) : "24시간 후"}</b>까지 멈추며, 이후 허용된 발송 시간에 미발송분을 이어서 보냅니다.
+          앱의 하루 발송 한도를 올려도 Gmail 한도는 늘어나지 않습니다. 대량 뉴스레터에는{" "}
+          <Link href="/settings" className="underline">
+            설정의 Resend 안내
+          </Link>
+          를 확인하세요.
+        </Callout>
+      )}
+      {!quota.providerBlocked && !quota.unlimited && quota.remaining <= 0 && (
+        <Callout tone="warn" title={`오늘 앱 발송 한도(${quota.limit}통)를 모두 사용했습니다`} className="mb-4">
           남은 발송 건은 내일 한국 시간 {s.defaultSendTime}부터 이어서 보내집니다. 한도를 조정하려면{" "}
           <Link href="/settings" className="underline">
             설정
           </Link>
-          에서 &apos;하루 발송 한도&apos;를 바꾸세요.
+          에서 &apos;하루 발송 한도&apos;를 바꾸세요. (메일 제공자의 한도는 별도 적용됩니다.)
         </Callout>
       )}
       {s.lastSyncError && (
@@ -171,12 +182,20 @@ export default async function Home({ searchParams }: { searchParams: FlashParams
         <StatCard
           label="오늘 발송량"
           icon={<IconSend className="h-3.5 w-3.5" />}
-          tone={quota.unlimited ? "info" : quotaUsedPct >= 100 ? "danger" : quotaUsedPct >= 80 ? "warn" : "ok"}
-          value={quota.unlimited ? `${quota.used}통 (무제한)` : `${quota.used} / ${quota.limit}통`}
+          tone={quota.providerBlocked ? "danger" : quota.unlimited ? "info" : quotaUsedPct >= 100 ? "danger" : quotaUsedPct >= 80 ? "warn" : "ok"}
+          value={
+            quota.providerBlocked
+              ? `${quota.used}통 (일시 중지)`
+              : quota.unlimited
+                ? `${quota.used}통 (무제한)`
+                : `${quota.used} / ${quota.limit}통`
+          }
           hint={
-            quota.unlimited
-              ? "하루 한도가 설정되어 있지 않습니다"
-              : `오늘 ${quota.remaining}통 남음 · 한국 시간 자정 초기화`
+            quota.providerBlocked
+              ? `Gmail 한도 초과 · ${formatRelativeKst(quota.providerBlockedUntil, now)} 재개 예정`
+              : quota.unlimited
+                ? "앱 하루 한도 없음 · 메일 제공자 한도는 별도 적용"
+                : `오늘 앱 한도 ${quota.remaining}통 남음 · 한국 시간 자정 초기화`
           }
           footer={
             !quota.unlimited && (
@@ -317,12 +336,28 @@ export default async function Home({ searchParams }: { searchParams: FlashParams
                                 size="sm"
                                 confirm={`"${c.subject}"을(를) ${
                                   rc === null ? `전체 구독자 ${subCount}명` : `${rc}명`
-                                }에게 ${c.status === "partial" ? "이어서 보내" : "지금 발송"}할까요?${
-                                  !quota.unlimited && quota.remaining <= 0 ? "\n오늘 한도가 소진되어 내일부터 발송됩니다." : ""
+                                }에게 ${
+                                  c.status === "partial"
+                                    ? "미발송분을 이어 보내"
+                                    : c.status === "sent" || c.status === "failed"
+                                      ? "성공 기록이 없는 주소만 재시도"
+                                      : "발송"
+                                }할까요?\n이미 성공한 주소는 중복 발송하지 않습니다.${
+                                  quota.providerBlocked
+                                    ? `\nGmail 한도 초과로 발송이 멈춰 있습니다 (${quota.providerBlockedUntil ? formatKst(quota.providerBlockedUntil) : "24시간 후"} 이후 재개).`
+                                    : !quota.unlimited && quota.remaining <= 0
+                                      ? "\n오늘 앱 한도가 소진되어 내일부터 발송됩니다."
+                                      : ""
                                 }`}
                                 pendingText="발송 중…"
                               >
-                                {c.status === "partial" ? "이어 보내기" : c.status === "sent" ? "재발송" : "지금 발송"}
+                                {c.status === "partial"
+                                  ? "이어 보내기"
+                                  : c.status === "sent"
+                                    ? "미발송분 재시도"
+                                    : c.status === "failed"
+                                      ? "재시도"
+                                      : "지금 발송"}
                               </SubmitButton>
                             </form>
                           )}
@@ -403,14 +438,14 @@ export default async function Home({ searchParams }: { searchParams: FlashParams
             보냅니다. <b className="text-ink-2">사용</b> 열에 N / 보류 / X를 쓰면 발송하지 않습니다.
           </li>
           <li>
-            수신자가 하루 발송 한도({quota.unlimited ? "무제한" : `${quota.limit}명`})보다 많으면 오늘 보낼 수 있는
-            만큼 보내고 <b className="text-ink-2">나머지는 다음 날 같은 시각에 자동으로 이어서 발송</b>합니다. 이미
-            받은 사람에게 중복 발송하지 않습니다.
+            수신자가 앱 하루 한도({quota.unlimited ? "없음" : `${quota.limit}명`})보다 많으면 오늘 보낼 수 있는
+            만큼 보내고 나머지는 다음 발송 가능 시간에 이어서 보냅니다. Gmail 등 제공자 한도는 별도이며, Gmail 550
+            5.4.5 응답 시 24시간 발송을 멈춘 뒤 미발송분을 재개합니다. 이미 받은 사람에게 중복 발송하지 않습니다.
           </li>
           <li>
             제목·본문에 <code className="rounded bg-surface-2 px-1 font-mono text-[11px]">{"{{이름}}"}</code>을 쓰면
-            구독자 이름으로 바뀝니다. 한 번 발송된 행은 다시 발송되지 않습니다 (제목이나 발송일시를 바꾸면 새
-            콘텐츠로 인식).
+            구독자 이름으로 바뀝니다. 같은 콘텐츠를 재시도할 때는 성공 로그가 있는 주소를 항상 건너뜁니다. 제목이나
+            발송일시를 바꿔 새 콘텐츠가 되면 새 발송으로 취급됩니다.
           </li>
         </ul>
       </Panel>
