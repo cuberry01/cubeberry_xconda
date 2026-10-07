@@ -87,7 +87,7 @@ export async function tick(): Promise<string[]> {
 
     const quotaExhausted = async () => {
       const q = await getQuotaStatus(s, now);
-      return !q.unlimited && q.remaining <= 0;
+      return q.providerBlocked || (!q.unlimited && q.remaining <= 0);
     };
 
     // 0) 부분 발송 이어 보내기 — 하루 한도로 일부만 보낸 콘텐츠를 다음 날 기본 발송 시각부터 재개한다.

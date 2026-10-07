@@ -39,6 +39,9 @@ async function setDefaultTimeMinutesAgo(minAgo: number) {
 }
 
 async function main() {
+  // Keep the integration run isolated from production mail credentials: it simulates sends in test mode.
+  for (const key of ["RESEND_API_KEY", "SMTP_HOST", "SMTP_USER", "SMTP_PASS"]) delete process.env[key];
+
   console.log("── 준비 ──");
   await db.delete(sendLogs);
   await db.delete(contents);
@@ -113,6 +116,19 @@ async function main() {
     allSent.length === 1200 && new Set(allSent.map((l) => l.email)).size === 1200,
     `logs=${allSent.length}`,
   );
+
+  console.log("── 완료된 콘텐츠 재시도: 성공 로그 주소는 건너뜀 ──");
+  const retryCompleted = await sendContent(a.id, true);
+  const sentAfterRetry = await db.select().from(sendLogs).where(eq(sendLogs.status, "sent"));
+  check("완료 콘텐츠 재시도 시 신규 발송 0건", retryCompleted.sent === 0 && retryCompleted.alreadySent === 1200);
+  check("성공 로그가 있는 주소에 중복 발송하지 않음", sentAfterRetry.length === 1200);
+
+  console.log("── 대기로 되돌린 뒤 재시도: 기존 성공 로그 보존 ──");
+  await db.update(contents).set({ status: "pending", sentCount: 0, failCount: 0, sentAt: null }).where(eq(contents.id, a.id));
+  const retryAfterReset = await sendContent(a.id);
+  const sentAfterReset = await db.select().from(sendLogs).where(eq(sendLogs.status, "sent"));
+  check("대기 복구 후에도 신규 발송 0건", retryAfterReset.sent === 0 && retryAfterReset.alreadySent === 1200);
+  check("대기 복구 후에도 성공 로그 중복 없음", sentAfterReset.length === 1200);
 
   console.log("── 스케줄러 tick: 예약 콘텐츠 + 부분 발송 이어 보내기 ──");
   await db.delete(sendLogs);
