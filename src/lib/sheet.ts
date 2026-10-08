@@ -133,6 +133,10 @@ export function rowsToContents(rows: string[][], defaultTime: string): {
     if (rawSchedule && !scheduledAt) {
       warnings.push(`${rowNumber}행: 발송일시 '${rawSchedule}'를 해석할 수 없어 대기열(기본 발송시간)로 처리합니다.`);
     }
+    const recipients = get(r, "recipients");
+    if (hasTrailingDotEmail(recipients)) {
+      warnings.push(`${rowNumber}행: 수신자 주소 끝에 마침표(.)가 있습니다. 해당 주소는 발송 대상에서 빠지므로 끝의 점을 제거하세요.`);
+    }
     const idVal = get(r, "id");
     let key = idVal
       ? `id:${idVal}`
@@ -147,7 +151,7 @@ export function rowsToContents(rows: string[][], defaultTime: string): {
       body: get(r, "body"),
       link: get(r, "link"),
       imageUrl: get(r, "image"),
-      recipients: get(r, "recipients"),
+      recipients,
       rawSchedule,
       scheduledAt,
       active: !INACTIVE_VALUES.includes(activeRaw),
@@ -156,38 +160,66 @@ export function rowsToContents(rows: string[][], defaultTime: string): {
   return { items, warnings };
 }
 
-export function rowsToSubscribers(rows: string[][]) {
+function hasTrailingDotEmail(value: string) {
+  return value.split(/[\s,;]+/).some((part) => {
+    const email = part.trim();
+    return email.endsWith(".") && isEmail(email.slice(0, -1));
+  });
+}
+
+export function rowsToSubscribers(rows: string[][], warnings: string[] = []) {
   const headerIdx = rows.findIndex((r) => r.some((c) => c.trim() !== ""));
   if (headerIdx < 0) return [];
   const header = rows[headerIdx].map(norm);
   let emailIdx = header.findIndex((h) => ["이메일", "email", "메일", "e-mail", "이메일주소", "메일주소"].includes(h));
   let nameIdx = header.findIndex((h) => ["이름", "name", "성명", "닉네임"].includes(h));
   let dataRows = rows.slice(headerIdx + 1);
+  let dataStartRow = headerIdx + 1;
   if (emailIdx < 0) {
-    // no header — detect column containing emails
-    emailIdx = rows[headerIdx].findIndex((c) => isEmail(c));
+    // 머리글이 없으면 첫 행에서 이메일 열을 추정한다. 끝에 점이 잘못 붙은 주소도 찾아
+    // 해당 행을 건너뛰면서 동기화 결과에 원인을 알린다.
+    emailIdx = rows[headerIdx].findIndex((c) => {
+      const value = c.trim();
+      return isEmail(value) || (value.endsWith(".") && isEmail(value.slice(0, -1)));
+    });
     nameIdx = -1;
     dataRows = rows.slice(headerIdx);
+    dataStartRow = headerIdx;
     if (emailIdx < 0) return [];
   }
   const unique = new Map<string, { email: string; name: string }>();
-  for (const row of dataRows) {
+  const trailingDotRows: number[] = [];
+  for (const [index, row] of dataRows.entries()) {
     const subscriber = {
       email: (row[emailIdx] ?? "").trim().toLowerCase(),
       name: nameIdx >= 0 ? (row[nameIdx] ?? "").trim() : "",
     };
-    if (!isEmail(subscriber.email)) continue;
+    if (!isEmail(subscriber.email)) {
+      if (subscriber.email.endsWith(".")) trailingDotRows.push(dataStartRow + index + 1);
+      continue;
+    }
 
     const previous = unique.get(subscriber.email);
     // 한 번의 bulk upsert에 같은 이메일이 두 번 들어가면 PostgreSQL이 실패한다.
     // 중복 행에서는 비어 있지 않은 최신 이름을 우선한다.
     if (!previous || subscriber.name) unique.set(subscriber.email, subscriber);
   }
+  if (trailingDotRows.length) {
+    const shownRows = trailingDotRows.slice(0, 8).join(", ");
+    const moreRows = trailingDotRows.length > 8 ? ` 외 ${trailingDotRows.length - 8}개` : "";
+    warnings.push(
+      `구독자 시트 ${trailingDotRows.length}개 행(${shownRows}행${moreRows})의 이메일 주소 끝에 마침표(.)가 있어 제외했습니다. 끝의 점을 제거한 뒤 다시 동기화하세요.`,
+    );
+  }
   return [...unique.values()];
 }
 
 export function isEmail(s: string) {
-  return /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(s.trim());
+  const email = s.trim();
+  // Gmail rejects an address with a final dot as a non-existent recipient. Keep dots inside
+  // addresses (for example, first.last@example.com) valid, but don't let the final dot through.
+  if (email.endsWith(".")) return false;
+  return /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/.test(email);
 }
 
 export function splitEmails(s: string) {

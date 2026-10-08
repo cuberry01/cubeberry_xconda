@@ -91,7 +91,7 @@ export async function syncSheet(): Promise<{
     let subCount = 0;
     if (s.subscribersSheetUrl) {
       const subRows = await fetchSheetRows(s.subscribersSheetUrl);
-      const subs = rowsToSubscribers(subRows);
+      const subs = rowsToSubscribers(subRows, warnings);
       await upsertSubscribers(subs);
       subCount = subs.length;
     }
