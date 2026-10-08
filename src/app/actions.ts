@@ -72,7 +72,8 @@ export async function testSendAction(formData: FormData) {
   const id = Number(formData.get("id"));
   const s = await getSettings();
   const to = String(formData.get("to") || s.testEmail).trim();
-  if (!isEmail(to)) back("/", "설정에서 테스트 수신 이메일을 먼저 입력해주세요.", true);
+  if (!isEmail(to))
+    back("/", "테스트 이메일 형식이 올바르지 않습니다. 주소 끝에 마침표(.)가 붙지 않았는지 확인해주세요.", true);
   let provider: string;
   try {
     provider = await sendTest(id, to);
@@ -110,7 +111,8 @@ export async function saveSettingsAction(formData: FormData) {
   if (subscribersSheetUrl && !parseSheetUrl(subscribersSheetUrl))
     back("/settings", "구독자 시트 URL이 올바르지 않습니다.", true);
   if (!/^\d{2}:\d{2}$/.test(defaultSendTime)) back("/settings", "발송 시간 형식이 올바르지 않습니다.", true);
-  if (testEmail && !isEmail(testEmail)) back("/settings", "테스트 이메일 형식이 올바르지 않습니다.", true);
+  if (testEmail && !isEmail(testEmail))
+    back("/settings", "테스트 이메일 형식이 올바르지 않습니다. 주소 끝에 마침표(.)가 붙지 않았는지 확인해주세요.", true);
   if (!Number.isFinite(dailyLimit) || dailyLimit < 0 || dailyLimit > 100000)
     back("/settings", "앱 하루 발송 한도는 0 이상 100000 이하의 숫자로 입력하세요. (0 = 앱 한도 없음)", true);
 
@@ -147,7 +149,10 @@ export async function addSubscribersAction(formData: FormData) {
       .returning();
     if (r.length) added++;
   }
-  back("/subscribers", `${added}명 추가/갱신${invalid ? `, 형식 오류 ${invalid}줄` : ""}`);
+  back(
+    "/subscribers",
+    `${added}명 추가/갱신${invalid ? `, 형식 오류 ${invalid}줄 (주소 끝에 마침표(.)가 붙지 않았는지 확인)` : ""}`,
+  );
 }
 
 export async function toggleSubscriberAction(formData: FormData) {

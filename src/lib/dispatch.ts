@@ -9,7 +9,7 @@ import {
 } from "./mail-errors";
 import { getQuotaStatus, sentEmailsForContent } from "./quota";
 import { getSettings } from "./settings";
-import { splitEmails } from "./sheet";
+import { isEmail, splitEmails } from "./sheet";
 import { renderEmail } from "./template";
 import { formatKst } from "./time";
 
@@ -28,9 +28,14 @@ async function resolveRecipients(c: Content) {
       .filter((e) => map.get(e)?.active !== false)
       .map((e) => ({ email: e, name: map.get(e)?.name ?? "", token: map.get(e)?.token }));
   }
-  // 수신자 열이 비어 있으면 전체 발송 — 활성화된 구독자 전원
+  // 수신자 열이 비어 있으면 전체 발송 — 활성 구독자 중 형식이 유효한 주소만 보낸다.
+  // 이전 버전에서 저장된 끝점 등 잘못된 주소가 SMTP 반송을 만들지 않도록 방어한다.
   const all = await db.select().from(subscribers).where(eq(subscribers.active, true));
-  return all.map((s) => ({ email: s.email, name: s.name, token: s.token as string | undefined }));
+  const valid = all.filter((subscriber) => isEmail(subscriber.email));
+  if (valid.length !== all.length) {
+    console.warn(`[mail] 유효하지 않은 이메일 주소 ${all.length - valid.length}개를 발송 대상에서 제외했습니다.`);
+  }
+  return valid.map((s) => ({ email: s.email, name: s.name, token: s.token as string | undefined }));
 }
 
 export interface SendResult {
@@ -68,11 +73,14 @@ export async function sendContent(contentId: number, force = false): Promise<Sen
   const s = await getSettings();
   const recipients = await resolveRecipients(c);
   if (!recipients.length) {
+    const error = c.recipients.trim()
+      ? "수신자가 없습니다. '수신자' 열의 주소 형식과 끝의 마침표(.)를 확인하세요."
+      : "수신자가 없습니다. 구독자 목록의 이메일 형식과 주소 끝의 마침표(.)를 확인하세요.";
     await db
       .update(contents)
-      .set({ status: "failed", error: "수신자가 없습니다. 구독자를 추가하거나 '수신자' 열을 확인하세요.", updatedAt: new Date() })
+      .set({ status: "failed", error, updatedAt: new Date() })
       .where(eq(contents.id, c.id));
-    return { ok: false, total: 0, error: "수신자가 없습니다. 구독자를 추가하거나 '수신자' 열을 확인하세요." };
+    return { ok: false, total: 0, error };
   }
 
   // 부분 발송, 수동 재시도, 대기 상태 복구 등 어떤 경로에서도 성공한 주소는 다시 보내지 않는다.

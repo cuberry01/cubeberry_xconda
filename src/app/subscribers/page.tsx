@@ -3,7 +3,8 @@ import { subscribers } from "@/db/schema";
 import { Flash, type FlashParams } from "@/components/Flash";
 import { SubmitButton } from "@/components/SubmitButton";
 import { IconExternal, IconRefresh, IconTrash, IconUsers } from "@/components/icons";
-import { Badge, EmptyState, LinkButton, PageHeader, Panel, StatCard, hintClass, inputClass, labelClass } from "@/components/ui";
+import { Badge, Callout, EmptyState, LinkButton, PageHeader, Panel, StatCard, hintClass, inputClass, labelClass } from "@/components/ui";
+import { isEmail } from "@/lib/sheet";
 import { getSettings } from "@/lib/settings";
 import { formatKst } from "@/lib/time";
 import { desc } from "drizzle-orm";
@@ -19,7 +20,10 @@ export default async function SubscribersPage({ searchParams }: { searchParams: 
   const sp = await searchParams;
   const s = await getSettings();
   const list = await db.select().from(subscribers).orderBy(desc(subscribers.createdAt));
-  const active = list.filter((x) => x.active).length;
+  const invalidEmailCount = list.filter((x) => !isEmail(x.email)).length;
+  const validEmailCount = list.length - invalidEmailCount;
+  const active = list.filter((x) => x.active && isEmail(x.email)).length;
+  const inactive = list.filter((x) => !x.active).length;
   const fromSheet = list.filter((x) => x.source === "sheet").length;
 
   return (
@@ -32,6 +36,12 @@ export default async function SubscribersPage({ searchParams }: { searchParams: 
         description="뉴스레터를 받는 사람을 관리합니다. 시트에서 자동으로 가져오거나 직접 추가할 수 있습니다."
       />
 
+      {invalidEmailCount > 0 && (
+        <Callout tone="warn" title={`형식이 올바르지 않은 주소 ${invalidEmailCount}개`} className="mb-4">
+          주소 끝의 마침표(.) 등 형식 오류가 있는 주소는 발송 대상에서 제외됩니다. 목록에서 삭제한 뒤 올바른 주소로 다시 추가하세요. 시트에서 가져온 주소라면 원본도 수정한 뒤 다시 동기화해주세요.
+        </Callout>
+      )}
+
       <div className="mb-6 grid gap-4 sm:grid-cols-3">
         <StatCard
           label="전체 구독자"
@@ -43,12 +53,12 @@ export default async function SubscribersPage({ searchParams }: { searchParams: 
           label="수신 중"
           tone="ok"
           value={`${active}명`}
-          hint={list.length ? `전체의 ${Math.round((active / list.length) * 100)}%` : "구독자를 추가하세요"}
+          hint={validEmailCount ? `유효한 주소 중 ${Math.round((active / validEmailCount) * 100)}%` : "유효한 이메일 주소를 추가하세요"}
         />
         <StatCard
           label="수신 거부"
-          tone={list.length - active > 0 ? "warn" : "off"}
-          value={`${list.length - active}명`}
+          tone={inactive > 0 ? "warn" : "off"}
+          value={`${inactive}명`}
           hint="수신 거부한 주소는 다시 활성화되지 않습니다"
         />
       </div>
@@ -71,7 +81,7 @@ export default async function SubscribersPage({ searchParams }: { searchParams: 
                 />
                 <p className={hintClass}>
                   한 줄에 한 명씩 입력하세요. 예: <code className="font-mono">hong@example.com, 홍길동</code> 또는{" "}
-                  <code className="font-mono">홍길동 &lt;hong@example.com&gt;</code>
+                  <code className="font-mono">홍길동 &lt;hong@example.com&gt;</code>. 이메일 주소 끝에 마침표(.)가 붙으면 반송될 수 있으니 확인해주세요.
                 </p>
               </div>
               <SubmitButton className="w-full" pendingText="추가 중…">
